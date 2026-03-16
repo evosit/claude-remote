@@ -3,8 +3,7 @@ import net from "node:net";
 import path from "node:path";
 import fs from "node:fs";
 import { fork, type ChildProcess } from "node:child_process";
-import os from "node:os";
-import { STATUS_FLAG, PIPE_REGISTRY, encodeProjectPath, safeUnlink } from "./utils.js";
+import { STATUS_FLAG, PIPE_REGISTRY, safeUnlink } from "./utils.js";
 import type { DaemonToParent, PipeMessage } from "./types.js";
 
 // ── Constants ──
@@ -18,7 +17,9 @@ const CLAUDE_BIN = "claude.exe";
 
 let daemon: ChildProcess | null = null;
 let sessionId: string | null = null;
+let transcriptPath: string | null = null;
 let projectDir = process.cwd();
+let daemonWasEnabled = false;
 
 // ── Spawn Claude in PTY ──
 
@@ -56,39 +57,6 @@ proc.onExit(({ exitCode }) => {
   process.exit(exitCode);
 });
 
-// ── Session detection ──
-
-const claudeProjectsDir = path.join(os.homedir(), ".claude", "projects");
-const encodedCwd = encodeProjectPath(projectDir);
-const sessionDir = path.join(claudeProjectsDir, encodedCwd);
-
-const sessionPoll = setInterval(() => {
-  try {
-    if (!fs.existsSync(sessionDir)) return;
-
-    let newest = "";
-    let newestTime = 0;
-    for (const f of fs.readdirSync(sessionDir)) {
-      if (!f.endsWith(".jsonl")) continue;
-      const t = fs.statSync(path.join(sessionDir, f)).mtimeMs;
-      if (t > newestTime) { newestTime = t; newest = f; }
-    }
-
-    if (newest) {
-      const newSessionId = newest.replace(".jsonl", "");
-      if (newSessionId !== sessionId) {
-        sessionId = newSessionId;
-        console.log(`[rc] Detected session: ${sessionId}`);
-        clearInterval(sessionPoll);
-      }
-    }
-  } catch {
-    // directory might not exist yet
-  }
-}, 1000);
-
-setTimeout(() => clearInterval(sessionPoll), 60000);
-
 // ── Named Pipe Server ──
 
 let pipeServer: net.Server | null = null;
@@ -100,11 +68,28 @@ function startPipeServer() {
         const msg = JSON.parse(data.toString()) as PipeMessage;
         console.log(`[rc] Pipe message: ${msg.type}`);
 
-        if (msg.type === "enable") {
+        if (msg.type === "session-register") {
+          // SessionStart hook sends session info — store it
+          const oldSessionId = sessionId;
+          sessionId = msg.sessionId;
+          transcriptPath = msg.transcriptPath;
+          if (msg.cwd) projectDir = msg.cwd;
+          console.log(`[rc] Session registered: ${sessionId}`);
+
+          // If daemon was running on a different session, restart it
+          if (daemonWasEnabled && oldSessionId && oldSessionId !== sessionId) {
+            console.log("[rc] New session detected, restarting daemon...");
+            stopDaemon();
+            startDaemon();
+          }
+
+          socket.write(JSON.stringify({ status: "ok" }));
+        } else if (msg.type === "enable") {
           if (msg.sessionId) sessionId = msg.sessionId;
           startDaemon(msg.channelName);
           socket.write(JSON.stringify({ status: "ok", active: true }));
         } else if (msg.type === "disable") {
+          daemonWasEnabled = false;
           stopDaemon();
           socket.write(JSON.stringify({ status: "ok", active: false }));
         } else if (msg.type === "status") {
@@ -166,13 +151,15 @@ function setStatusFlag(active: boolean) {
 // ── Daemon management ──
 
 function startDaemon(channelName?: string) {
+  daemonWasEnabled = true;
+
   if (daemon) {
     console.log("[rc] Daemon already running");
     return;
   }
 
   if (!sessionId) {
-    console.error("[rc] Cannot start daemon: no session ID detected yet");
+    console.error("[rc] Cannot start daemon: no session ID yet (waiting for SessionStart hook)");
     return;
   }
 
@@ -213,7 +200,8 @@ function startDaemon(channelName?: string) {
     daemon = null;
   });
 
-  daemon.send({ type: "session-info", sessionId, projectDir, channelName });
+  // Pass transcript path directly if we have it from the hook
+  daemon.send({ type: "session-info", sessionId, projectDir, channelName, transcriptPath });
 }
 
 function stopDaemon() {
