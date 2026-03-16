@@ -22,6 +22,8 @@ const COLOR = {
   SYSTEM: 0x95a5a6,     // gray — system/meta
 } as const;
 
+export { COLOR };
+
 const MAX_EMBED_DESC = 4000;
 const MAX_CONTENT = 1900;
 
@@ -38,6 +40,8 @@ function splitContent(text: string, max = MAX_CONTENT): string[] {
   if (remaining.trim()) chunks.push(remaining);
   return chunks;
 }
+
+export { splitContent };
 
 // ── Single message renderer ──
 
@@ -70,9 +74,7 @@ export function renderMessage(msg: ProcessedMessage): MessageCreateOptions[] {
     }
 
     case "tool-result": {
-      if (!msg.content.trim() || msg.content === "undefined") {
-        return []; // will be merged with tool-use in batch mode
-      }
+      if (!msg.content.trim() || msg.content === "undefined") return [];
       const embed = new EmbedBuilder()
         .setDescription(`\`\`\`\n${msg.content.slice(0, MAX_EMBED_DESC - 10)}\n\`\`\``)
         .setColor(COLOR.TOOL_OK);
@@ -85,26 +87,6 @@ export function renderMessage(msg: ProcessedMessage): MessageCreateOptions[] {
         .setDescription(`\`\`\`\n${msg.content.slice(0, MAX_EMBED_DESC - 10)}\n\`\`\``)
         .setColor(COLOR.TOOL_ERR);
       return [{ embeds: [embed] }];
-    }
-
-    case "permission-prompt": {
-      const embed = new EmbedBuilder()
-        .setTitle("⚠️ Permission needed")
-        .setDescription(`**${msg.toolName}** ${msg.content}`)
-        .setColor(COLOR.PERMISSION);
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`${ID_PREFIX.ALLOW}${msg.toolUseId}`)
-          .setLabel("Allow")
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId(`${ID_PREFIX.DENY}${msg.toolUseId}`)
-          .setLabel("Deny")
-          .setStyle(ButtonStyle.Danger),
-      );
-
-      return [{ embeds: [embed], components: [row] }];
     }
 
     case "ask-user-question": {
@@ -146,11 +128,7 @@ export function renderMessage(msg: ProcessedMessage): MessageCreateOptions[] {
       });
     }
 
-    case "subagent-start":
-    case "subagent-complete":
-    case "mcp-progress":
     case "rewind":
-    case "compact":
     case "turn-duration": {
       const embed = new EmbedBuilder()
         .setDescription(msg.content)
@@ -166,73 +144,69 @@ export function renderMessage(msg: ProcessedMessage): MessageCreateOptions[] {
   }
 }
 
-// ── Batch renderer: groups tool-use + tool-result into single messages ──
+// ── Tool call embed builders (for thread-based rendering) ──
+
+/** Build the compact main-channel embed for a tool call */
+export function renderToolUseEmbed(msg: ProcessedMessage): EmbedBuilder {
+  return new EmbedBuilder()
+    .setDescription(`🔧 **${msg.toolName}** ${msg.content}`)
+    .setColor(COLOR.TOOL);
+}
+
+/** Update a tool-use embed with result status */
+export function renderToolUseEmbedWithStatus(msg: ProcessedMessage, success: boolean): EmbedBuilder {
+  const icon = success ? "✅" : "❌";
+  return new EmbedBuilder()
+    .setDescription(`🔧 **${msg.toolName}** ${msg.content} ${icon}`)
+    .setColor(success ? COLOR.TOOL : COLOR.TOOL_ERR);
+}
+
+/** Build thread messages for a tool result (splits long content) */
+export function renderToolResultThreadMessages(content: string, isError: boolean): MessageCreateOptions[] {
+  if (!content.trim() || content === "undefined") {
+    return [{ content: isError ? "❌ *(empty error)*" : "✅ *(no output)*" }];
+  }
+
+  const prefix = isError ? "❌ **Error:**\n" : "";
+  const chunks = splitContent(content, MAX_CONTENT - 20); // leave room for code fences
+
+  return chunks.map((chunk, i) => ({
+    content: `${i === 0 ? prefix : ""}\`\`\`\n${chunk}\n\`\`\``,
+  }));
+}
+
+/** Build permission prompt for a thread */
+export function renderPermissionPrompt(toolUseId: string, toolName: string, content: string): MessageCreateOptions {
+  const embed = new EmbedBuilder()
+    .setTitle("⚠️ Permission needed")
+    .setDescription(`**${toolName}** ${content}`)
+    .setColor(COLOR.PERMISSION);
+
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`${ID_PREFIX.ALLOW}${toolUseId}`)
+      .setLabel("Allow")
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`${ID_PREFIX.DENY}${toolUseId}`)
+      .setLabel("Deny")
+      .setStyle(ButtonStyle.Danger),
+  );
+
+  return { embeds: [embed], components: [row] };
+}
+
+// ── Batch renderer: simplified — tool results go to threads now ──
 
 export function renderBatch(messages: ProcessedMessage[]): MessageCreateOptions[] {
   const payloads: MessageCreateOptions[] = [];
-  let i = 0;
 
-  while (i < messages.length) {
-    const pm = messages[i];
+  for (const pm of messages) {
+    // Tool results are handled via threads in daemon.ts, skip them in batch
+    if (pm.type === "tool-result" || pm.type === "tool-result-error") continue;
 
-    // Group consecutive tool-use + tool-result pairs into one embed
-    if (pm.type === "tool-use") {
-      const toolEmbeds: EmbedBuilder[] = [];
-
-      while (i < messages.length && (messages[i].type === "tool-use" || messages[i].type === "tool-result" || messages[i].type === "tool-result-error")) {
-        const cur = messages[i];
-
-        if (cur.type === "tool-use") {
-          // Check if next message is its result
-          const next = messages[i + 1];
-          if (next && (next.type === "tool-result" || next.type === "tool-result-error")) {
-            // Merge tool-use + result into one embed
-            const resultIcon = next.type === "tool-result-error" ? "❌" : "✅";
-            const resultText = next.content.trim() && next.content !== "undefined"
-              ? (next.content.length > 100 ? `\n\`\`\`\n${next.content.slice(0, 300)}\n\`\`\`` : ` → ${next.content}`)
-              : "";
-            toolEmbeds.push(
-              new EmbedBuilder()
-                .setDescription(`🔧 **${cur.toolName}** ${cur.content} ${resultIcon}${resultText}`)
-                .setColor(next.type === "tool-result-error" ? COLOR.TOOL_ERR : COLOR.TOOL)
-            );
-            i += 2;
-          } else {
-            // Tool use with no result yet
-            toolEmbeds.push(
-              new EmbedBuilder()
-                .setDescription(`🔧 **${cur.toolName}** ${cur.content}`)
-                .setColor(COLOR.TOOL)
-            );
-            i++;
-          }
-        } else {
-          // Orphan tool result (result without preceding tool-use in this batch)
-          if (cur.type === "tool-result-error") {
-            toolEmbeds.push(
-              new EmbedBuilder()
-                .setDescription(`❌ \`\`\`\n${cur.content.slice(0, 300)}\n\`\`\``)
-                .setColor(COLOR.TOOL_ERR)
-            );
-          }
-          // Skip standalone tool-result (success) — noise
-          i++;
-        }
-
-        // Discord max 10 embeds per message
-        if (toolEmbeds.length >= 10) break;
-      }
-
-      if (toolEmbeds.length > 0) {
-        payloads.push({ embeds: toolEmbeds });
-      }
-      continue;
-    }
-
-    // Non-tool messages: render normally
     const rendered = renderMessage(pm);
     payloads.push(...rendered);
-    i++;
   }
 
   return payloads;
