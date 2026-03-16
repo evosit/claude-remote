@@ -23,7 +23,7 @@ async function main() {
     process.exit(0);
   }
 
-  const pipe = findPipe();
+  const pipe = process.env.DISCORD_RC_PIPE || findPipe();
   if (!pipe) {
     process.stderr.write("[discord-rc] No active rc instance found. Start Claude with `discord-rc` instead of `claude`.\n");
     process.exit(2);

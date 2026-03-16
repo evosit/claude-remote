@@ -80,25 +80,8 @@ export function walkCurrentBranch(messages: JSONLMessage[]): JSONLMessage[] {
 /**
  * Process system/progress/internal message types.
  */
-export function processNonConversation(msg: JSONLMessage): ProcessedMessage | null {
-  if (msg.type !== "system") return null;
-
-  if (msg.subtype === "turn_duration") {
-    const data = msg.data || {};
-    const cost = {
-      duration: data.duration as string | undefined,
-      inputTokens: data.inputTokens as number | undefined,
-      outputTokens: data.outputTokens as number | undefined,
-      cost: data.cost as string | undefined,
-    };
-    const parts: string[] = [];
-    if (cost.duration) parts.push(`⏱ ${cost.duration}`);
-    if (cost.cost) parts.push(`💰 ${cost.cost}`);
-    if (cost.inputTokens) parts.push(`📥 ${cost.inputTokens} in`);
-    if (cost.outputTokens) parts.push(`📤 ${cost.outputTokens} out`);
-    return { type: "turn-duration", content: parts.join(" · ") || "Turn completed", uuid: msg.uuid, cost };
-  }
-
+export function processNonConversation(_msg: JSONLMessage): ProcessedMessage | null {
+  // System messages (turn_duration, etc.) are not forwarded to Discord — they're noise
   return null;
 }
 
@@ -145,6 +128,7 @@ export function processAssistantBlocks(msg: JSONLMessage): ProcessedMessage[] {
           uuid: msg.uuid,
           toolName: tb.name,
           toolUseId: tb.id,
+          toolInput: tb.input,
         });
       }
     }
@@ -221,10 +205,3 @@ function getToolInputPreview(name: string, input: Record<string, unknown>): stri
   }
 }
 
-/**
- * Detect if a new message is a rewind.
- */
-export function isRewind(newMsg: JSONLMessage, previousLatestUuid: string | null): boolean {
-  if (!previousLatestUuid || !newMsg.parentUuid) return false;
-  return newMsg.parentUuid !== previousLatestUuid;
-}

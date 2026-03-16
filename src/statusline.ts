@@ -30,8 +30,18 @@ process.stdin.on("end", () => {
   const context = session.context_window?.used_percentage ?? 0;
   const cost = session.cost?.total_cost_usd;
 
-  // Check if Discord RC daemon is active
-  const isActive = fs.existsSync(STATUS_FLAG);
+  // Check if Discord RC daemon is active (validate PID is alive)
+  let isActive = false;
+  try {
+    const pid = parseInt(fs.readFileSync(STATUS_FLAG, "utf-8").trim(), 10);
+    if (pid) {
+      process.kill(pid, 0); // throws if process doesn't exist
+      isActive = true;
+    }
+  } catch {
+    // File missing or PID dead — clean up stale flag
+    try { fs.unlinkSync(STATUS_FLAG); } catch { /* already gone */ }
+  }
   const rcStatus = isActive
     ? "\x1b[32m● On\x1b[0m"   // green dot
     : "\x1b[90m○ Off\x1b[0m"; // dim

@@ -1,9 +1,9 @@
-import { Client, GatewayIntentBits, Events, ChannelType, EmbedBuilder, type TextChannel, type ThreadChannel, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, type MessageComponentInteraction } from "discord.js";
+import { Client, GatewayIntentBits, Events, ChannelType, EmbedBuilder, type TextChannel, type ThreadChannel, type Message, type MessageCreateOptions, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, type MessageComponentInteraction } from "discord.js";
 import chokidar, { type FSWatcher } from "chokidar";
 import fs from "node:fs";
 import { readFile, open } from "node:fs/promises";
 import path from "node:path";
-import { parseJSONLString, processAssistantBlocks, processUserBlocks, processNonConversation, isRewind, walkCurrentBranch } from "./jsonl-parser.js";
+import { parseJSONLString, processAssistantBlocks, processUserBlocks, processNonConversation, walkCurrentBranch } from "./jsonl-parser.js";
 import { renderMessage, renderBatch, renderToolUseEmbed, renderToolUseEmbedWithStatus, renderToolResultThreadMessages, renderPermissionPrompt } from "./discord-renderer.js";
 import { resolveJSONLPath, truncate, ID_PREFIX, CONFIG_DIR } from "./utils.js";
 import type { JSONLMessage, ProcessedMessage, DaemonToParent, SessionInfoMessage } from "./types.js";
@@ -23,12 +23,13 @@ const MAX_SET_SIZE = 5000;
 let processedUuids = new Set<string>();
 let resolvedToolUseIds = new Set<string>();
 let discordOriginMessages = new Set<string>();
+let knownUuids = new Set<string>(); // all UUIDs we've seen — for rewind detection
 let currentPermissionMode: string | null = null;
 
 // Thread tracking: toolUseId → { thread, parentMessage, toolInfo }
 const toolUseThreads = new Map<string, {
   thread: ThreadChannel;
-  message: import("discord.js").Message;
+  message: Message;
   toolName: string;
   content: string;
 }>();
@@ -38,7 +39,7 @@ const RATE_WINDOW = 5000;
 const RATE_LIMIT = 5;
 let messageTimes: number[] = [];
 
-async function rateLimitedSend(ch: TextChannel | ThreadChannel, payload: import("discord.js").MessageCreateOptions): Promise<import("discord.js").Message | null> {
+async function rateLimitedSend(ch: TextChannel | ThreadChannel, payload: MessageCreateOptions): Promise<Message | null> {
   const now = Date.now();
   messageTimes = messageTimes.filter((t) => now - t < RATE_WINDOW);
 
@@ -201,6 +202,7 @@ async function replayHistory() {
     // Process all for dedup tracking
     const allProcessed: ProcessedMessage[] = [];
     for (const msg of branch) {
+      knownUuids.add(msg.uuid);
       for (const pm of getProcessedMessages(msg)) {
         processedUuids.add(dedupKey(pm));
         allProcessed.push(pm);
@@ -278,6 +280,45 @@ const BATCH_DELAY = 600;
 let pendingBatch: ProcessedMessage[] = [];
 let batchTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Tools that get collapsed into "Read 3 files" / "Searched 2 patterns, read 1 file"
+const PASSIVE_TOOLS = new Set(["Read", "Grep", "Glob"]);
+
+function isPassiveToolUse(pm: ProcessedMessage): boolean {
+  return pm.type === "tool-use" && !!pm.toolUseId && PASSIVE_TOOLS.has(pm.toolName || "");
+}
+
+// Track the current open passive tool group for retroactive merging
+let activePassiveGroup: {
+  message: Message;
+  thread: ThreadChannel;
+  counts: Map<string, number>;
+  toolUseIds: string[];
+} | null = null;
+
+// No time window — group stays open until a non-passive message closes it
+
+function passiveGroupSummary(counts: Map<string, number>): string {
+  const labels: Record<string, string> = { Read: "file", Grep: "pattern", Glob: "pattern" };
+  const parts = [...counts.entries()].map(([name, count]) => {
+    const noun = labels[name] || "call";
+    return `${name} ${count} ${noun}${count > 1 ? "s" : ""}`;
+  });
+  return parts.join(", ");
+}
+
+async function closePassiveGroup() {
+  if (!activePassiveGroup) return;
+  const g = activePassiveGroup;
+  activePassiveGroup = null;
+
+  // Rename with ✅ and archive
+  try {
+    const summary = passiveGroupSummary(g.counts);
+    await g.thread.setName(truncate(`${summary} ✅`, 100));
+  } catch { /* rate limited */ }
+  try { await g.thread.setArchived(true); } catch { /* best effort */ }
+}
+
 async function flushBatch() {
   batchTimer = null;
   if (!channel || pendingBatch.length === 0) return;
@@ -285,32 +326,189 @@ async function flushBatch() {
   const batch = pendingBatch;
   pendingBatch = [];
 
-  // Handle tool-use messages: send embed + create thread
   for (const pm of batch) {
-    if (pm.type === "tool-use" && pm.toolUseId) {
-      await handleToolUse(pm);
+    // Passive tool-use: merge into active group or start new one
+    if (isPassiveToolUse(pm)) {
+      await handlePassiveToolUse(pm);
+      continue;
     }
-  }
 
-  // Handle tool-result messages: post in thread
-  for (const pm of batch) {
+    // Tool results for the active passive group don't close it
     if ((pm.type === "tool-result" || pm.type === "tool-result-error") && pm.toolUseId) {
       await handleToolResult(pm);
+      continue;
+    }
+
+    // Any other non-passive message closes the current passive group
+    await closePassiveGroup();
+
+    // Edit/Write: show inline in channel, no thread
+    if (pm.type === "tool-use" && pm.toolUseId && (pm.toolName === "Edit" || pm.toolName === "Write")) {
+      const msgs = formatToolInput(pm);
+      for (const msg of msgs) {
+        await rateLimitedSend(channel!, msg);
+      }
+      // Mark as resolved so result doesn't create a thread
+      resolvedToolUseIds.add(pm.toolUseId);
+      continue;
+    }
+
+    if (pm.type === "tool-use" && pm.toolUseId) {
+      await handleToolUse(pm);
+    } else {
+      for (const payload of renderMessage(pm)) {
+        await rateLimitedSend(channel!, payload);
+      }
     }
   }
+}
 
-  // Render everything else (user-prompt, assistant-text, etc.) via batch renderer
-  // (renderBatch already skips tool-result types)
-  for (const payload of renderBatch(batch)) {
-    await rateLimitedSend(channel!, payload);
+function formatToolInput(pm: ProcessedMessage): MessageCreateOptions[] {
+  const input = pm.toolInput;
+  const name = pm.toolName;
+
+  if (name === "Edit" && input) {
+    const filePath = String(input.file_path || "");
+    const oldStr = String(input.old_string || "");
+    const newStr = String(input.new_string || "");
+    const lines: string[] = [`**Edit** \`${filePath}\``];
+    if (oldStr || newStr) {
+      lines.push("```diff");
+      // Build Claude Code-style diff: shared context lines unmarked, removed with -, added with +
+      const oldLines = oldStr.split("\n");
+      const newLines = newStr.split("\n");
+      // Find common prefix
+      let commonStart = 0;
+      while (commonStart < oldLines.length && commonStart < newLines.length && oldLines[commonStart] === newLines[commonStart]) {
+        commonStart++;
+      }
+      // Find common suffix
+      let commonEnd = 0;
+      while (commonEnd < oldLines.length - commonStart && commonEnd < newLines.length - commonStart && oldLines[oldLines.length - 1 - commonEnd] === newLines[newLines.length - 1 - commonEnd]) {
+        commonEnd++;
+      }
+      const removedLines = oldLines.slice(commonStart, oldLines.length - commonEnd);
+      const addedLines = newLines.slice(commonStart, newLines.length - commonEnd);
+      // Context before
+      for (let i = 0; i < commonStart; i++) lines.push(`  ${oldLines[i]}`);
+      // Changed lines
+      for (const l of removedLines) lines.push(`- ${l}`);
+      for (const l of addedLines) lines.push(`+ ${l}`);
+      // Context after
+      for (let i = oldLines.length - commonEnd; i < oldLines.length; i++) lines.push(`  ${oldLines[i]}`);
+      lines.push("```");
+    }
+    const content = lines.join("\n").slice(0, 1900);
+    return [{ content }];
+  }
+
+  if (name === "Write" && input) {
+    const filePath = String(input.file_path || "");
+    const fileContent = String(input.content || "");
+    const preview = fileContent.slice(0, 1500);
+    return [{ content: `**Write** \`${filePath}\`\n\`\`\`\n${preview}${fileContent.length > 1500 ? "\n…" : ""}\n\`\`\`` }];
+  }
+
+  if (name === "Read" && input) {
+    const filePath = String(input.file_path || "");
+    const parts = [`**Read** \`${filePath}\``];
+    if (input.offset) parts.push(`lines ${input.offset}–${Number(input.offset) + Number(input.limit || 2000)}`);
+    return [{ content: parts.join(" ") }];
+  }
+
+  if (name === "Bash" && input) {
+    return [{ content: `**Bash**\n\`\`\`bash\n${String(input.command || "").slice(0, 1800)}\n\`\`\`` }];
+  }
+
+  if (name === "Agent" && input) {
+    const desc = String(input.description || "");
+    const prompt = String(input.prompt || "").slice(0, 1500);
+    return [{ content: `**Agent** ${desc}\n\`\`\`\n${prompt}${String(input.prompt || "").length > 1500 ? "\n…" : ""}\n\`\`\`` }];
+  }
+
+  if (name === "Grep" && input) {
+    const parts = [`**Grep** \`${input.pattern}\``];
+    if (input.path) parts.push(`in \`${input.path}\``);
+    if (input.glob) parts.push(`(${input.glob})`);
+    return [{ content: parts.join(" ") }];
+  }
+
+  if (name === "Glob" && input) {
+    return [{ content: `**Glob** \`${input.pattern}\`` }];
+  }
+
+  return [{ content: `**${name}** ${pm.content}` }];
+}
+
+async function handlePassiveToolUse(pm: ProcessedMessage) {
+  if (!channel || !pm.toolUseId) return;
+
+  const name = pm.toolName || "Unknown";
+
+  // Can we merge into the existing group?
+  if (activePassiveGroup) {
+    const g = activePassiveGroup;
+    g.counts.set(name, (g.counts.get(name) || 0) + 1);
+    g.toolUseIds.push(pm.toolUseId);
+
+    const summary = passiveGroupSummary(g.counts);
+
+    // Update thread name
+    try { await g.thread.setName(truncate(summary, 100)); } catch { /* rate limited */ }
+
+    // Map this tool to the shared thread
+    toolUseThreads.set(pm.toolUseId, {
+      thread: g.thread,
+      message: g.message,
+      toolName: name,
+      content: summary,
+    });
+
+    // Post input in thread
+    for (const msg of formatToolInput(pm)) {
+      await rateLimitedSend(g.thread, msg);
+    }
+    return;
+  }
+
+  // Start a new group — standalone thread (not attached to a message)
+  const counts = new Map<string, number>([[name, 1]]);
+  const summary = passiveGroupSummary(counts);
+
+  try {
+    const thread = await channel.threads.create({
+      name: truncate(summary, 100),
+      autoArchiveDuration: 60,
+    });
+
+    toolUseThreads.set(pm.toolUseId, {
+      thread,
+      message: null!,
+      toolName: name,
+      content: summary,
+    });
+
+    activePassiveGroup = {
+      message: null!,
+      thread,
+      counts,
+      toolUseIds: [pm.toolUseId],
+    };
+
+    for (const msg of formatToolInput(pm)) {
+      await rateLimitedSend(thread, msg);
+    }
+  } catch (err) {
+    console.error("[daemon] Failed to create passive tool thread:", err);
   }
 }
 
 async function handleToolUse(pm: ProcessedMessage) {
   if (!channel || !pm.toolUseId) return;
 
-  const embed = renderToolUseEmbed(pm);
-  const sent = await rateLimitedSend(channel, { embeds: [embed] });
+  // Send a plain text starter message for the thread (not the embed)
+  const threadStarter = `🔧 **${pm.toolName}** ${pm.content}`;
+  const sent = await rateLimitedSend(channel, { content: threadStarter });
   if (!sent) return;
 
   try {
@@ -324,8 +522,11 @@ async function handleToolUse(pm: ProcessedMessage) {
       content: pm.content,
     });
 
-    // Post full tool input in thread
-    await rateLimitedSend(thread, { content: `**Input:** ${pm.content}` });
+    // Post formatted tool input in thread
+    const threadInput = formatToolInput(pm);
+    for (const msg of threadInput) {
+      await rateLimitedSend(thread, msg);
+    }
 
     // Permission prompt (only if not in bypass mode)
     if (currentPermissionMode !== "bypassPermissions") {
@@ -356,18 +557,26 @@ async function handleToolResult(pm: ProcessedMessage) {
       await rateLimitedSend(entry.thread, msg);
     }
 
-    // Update parent embed with status icon
-    try {
-      const updatedEmbed = renderToolUseEmbedWithStatus(
-        { ...pm, type: "tool-use", toolName: entry.toolName, content: entry.content, uuid: pm.uuid },
-        !isError,
-      );
-      await entry.message.edit({ embeds: [updatedEmbed] });
-    } catch { /* message may be gone */ }
-
-    // Archive thread after result
-    try { await entry.thread.setArchived(true); } catch { /* best effort */ }
     toolUseThreads.delete(pm.toolUseId);
+
+    // If this tool belongs to the active passive group, don't archive/edit yet
+    // closePassiveGroup() handles that when the group ends
+    if (activePassiveGroup && activePassiveGroup.thread.id === entry.thread.id) {
+      return;
+    }
+
+    // For non-grouped tools: check if other calls share this thread
+    const sameThread = [...toolUseThreads.values()].some(
+      (e) => e.thread.id === entry.thread.id
+    );
+
+    if (!sameThread) {
+      try {
+        const icon = isError ? "❌" : "✅";
+        await entry.message.edit({ content: `🔧 **${entry.toolName}** ${entry.content} ${icon}` });
+      } catch { /* message may be gone */ }
+      try { await entry.thread.setArchived(true); } catch { /* best effort */ }
+    }
   }
 }
 
@@ -419,13 +628,23 @@ async function handleFileChange(filePath: string) {
         currentPermissionMode = msg.permissionMode;
       }
 
-      if (isRewind(msg, lastMessageUuid)) {
+      // Rewind detection: only trigger if parentUuid is truly unknown
+      // (not just different from lastMessageUuid — parallel tool calls share a parent)
+      if (
+        !msg.isSidechain &&
+        msg.parentUuid &&
+        lastMessageUuid &&
+        !knownUuids.has(msg.parentUuid)
+      ) {
         if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
         pendingBatch = [];
         await rateLimitedSend(channel, { content: "⏪ Conversation rewound" });
         processedUuids.clear();
         resolvedToolUseIds.clear();
+        knownUuids.clear();
       }
+
+      knownUuids.add(msg.uuid);
 
       // Track tool_result arrivals
       if (msg.type === "user" && msg.message && Array.isArray(msg.message.content)) {
@@ -456,6 +675,7 @@ async function handleFileChange(filePath: string) {
     // Cap sets to prevent unbounded growth
     if (processedUuids.size > MAX_SET_SIZE) processedUuids = new Set([...processedUuids].slice(-MAX_SET_SIZE / 2));
     if (resolvedToolUseIds.size > MAX_SET_SIZE) resolvedToolUseIds = new Set([...resolvedToolUseIds].slice(-MAX_SET_SIZE / 2));
+    if (knownUuids.size > MAX_SET_SIZE) knownUuids = new Set([...knownUuids].slice(-MAX_SET_SIZE / 2));
   } catch (err) {
     console.error("[daemon] Error reading JSONL changes:", err);
   }
@@ -470,7 +690,7 @@ function getProcessedMessages(msg: JSONLMessage): ProcessedMessage[] {
 
 // ── Discord message handler ──
 
-async function handleDiscordMessage(message: import("discord.js").Message) {
+async function handleDiscordMessage(message: Message) {
   if (!channel || !client) return;
   if (message.author.bot) return;
   if (message.channel.id !== channel.id) return;
@@ -578,6 +798,19 @@ function saveSessionChannel(sid: string, channelId: string): void {
   } catch { /* best effort */ }
 }
 
+// ── Hot-reload: daemon watches its own dist files and exits for restart ──
+
+const RELOAD_EXIT_CODE = 42;
+
+chokidar.watch(path.resolve(import.meta.dirname, "daemon.js"), { ignoreInitial: true }).on("change", () => {
+  console.log("[daemon] Code changed, exiting for reload...");
+  if (channel) {
+    channel.send("🔄 **Reloading...**").catch(() => {}).finally(() => process.exit(RELOAD_EXIT_CODE));
+  } else {
+    process.exit(RELOAD_EXIT_CODE);
+  }
+});
+
 // ── Cleanup ──
 
 process.on("SIGTERM", cleanup);
@@ -585,7 +818,6 @@ process.on("SIGINT", cleanup);
 process.on("disconnect", cleanup);
 
 async function cleanup() {
-  console.log("[daemon] Cleaning up...");
   if (watcher) await watcher.close();
   if (channel) {
     try { await channel.send("🔴 **Discord sync disabled**"); } catch { /* channel may be gone */ }

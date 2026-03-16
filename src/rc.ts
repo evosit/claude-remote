@@ -23,7 +23,8 @@ let daemonWasEnabled = false;
 
 // ── Spawn Claude in PTY ──
 
-console.log("[rc] Starting Claude Code in PTY...");
+// Set env var so the SessionStart hook only connects to THIS rc instance
+process.env.DISCORD_RC_PIPE = PIPE_NAME;
 
 const proc = pty.spawn(CLAUDE_BIN, process.argv.slice(2), {
   name: "xterm-color",
@@ -50,7 +51,6 @@ process.stdout.on("resize", () => {
 });
 
 proc.onExit(({ exitCode }) => {
-  console.log(`\n[rc] Claude exited with code ${exitCode}`);
   stopDaemon();
   cleanupPipeServer();
   setStatusFlag(false);
@@ -66,19 +66,15 @@ function startPipeServer() {
     socket.on("data", (data) => {
       try {
         const msg = JSON.parse(data.toString()) as PipeMessage;
-        console.log(`[rc] Pipe message: ${msg.type}`);
 
         if (msg.type === "session-register") {
-          // SessionStart hook sends session info — store it
           const oldSessionId = sessionId;
           sessionId = msg.sessionId;
           transcriptPath = msg.transcriptPath;
           if (msg.cwd) projectDir = msg.cwd;
-          console.log(`[rc] Session registered: ${sessionId}`);
 
           // If daemon was running on a different session, restart it
           if (daemonWasEnabled && oldSessionId && oldSessionId !== sessionId) {
-            console.log("[rc] New session detected, restarting daemon...");
             stopDaemon();
             startDaemon();
           }
@@ -95,20 +91,16 @@ function startPipeServer() {
         } else if (msg.type === "status") {
           socket.write(JSON.stringify({ status: "ok", active: daemon !== null }));
         }
-      } catch (err) {
-        console.error("[rc] Pipe parse error:", err);
-        socket.write(JSON.stringify({ status: "error", message: String(err) }));
+      } catch {
+        socket.write(JSON.stringify({ status: "error" }));
       }
       socket.end();
     });
   });
 
-  pipeServer.on("error", (err) => {
-    console.error("[rc] Pipe server error:", err);
-  });
+  pipeServer.on("error", () => {});
 
   pipeServer.listen(PIPE_NAME, () => {
-    console.log(`[rc] Pipe server listening on ${PIPE_NAME}`);
     registerPipe();
   });
 }
@@ -150,20 +142,15 @@ function setStatusFlag(active: boolean) {
 
 // ── Daemon management ──
 
+let lastChannelName: string | undefined;
+
 function startDaemon(channelName?: string) {
   daemonWasEnabled = true;
+  if (channelName !== undefined) lastChannelName = channelName;
 
-  if (daemon) {
-    console.log("[rc] Daemon already running");
-    return;
-  }
+  if (daemon) return;
 
-  if (!sessionId) {
-    console.error("[rc] Cannot start daemon: no session ID yet (waiting for SessionStart hook)");
-    return;
-  }
-
-  console.log("[rc] Starting Discord daemon...");
+  if (!sessionId) return;
 
   const daemonPath = path.resolve(import.meta.dirname, "daemon.js");
 
@@ -177,7 +164,7 @@ function startDaemon(channelName?: string) {
     stdio: ["pipe", "pipe", "pipe", "ipc"],
   });
 
-  // Silence daemon output — it's debug noise that flashes in the PTY
+  // Silence daemon output
   daemon.stdout?.resume();
   daemon.stderr?.resume();
 
@@ -185,20 +172,24 @@ function startDaemon(channelName?: string) {
     if (msg.type === "pty-write") {
       proc.write(msg.text + "\r");
     } else if (msg.type === "daemon-ready") {
-      console.log(`[rc] Daemon ready, channel: ${msg.channelId}`);
       setStatusFlag(true);
     }
   });
 
   daemon.on("exit", (code) => {
-    console.log(`[rc] Daemon exited with code ${code}`);
+    daemon = null;
+    // Auto-restart on hot-reload exit or unexpected crash
+    if (daemonWasEnabled && code !== null) {
+      setTimeout(() => startDaemon(lastChannelName), 1000);
+    }
+  });
+
+  daemon.on("error", () => {
     daemon = null;
   });
 
-  daemon.on("error", (err) => {
-    console.error("[rc] Daemon error:", err);
-    daemon = null;
-  });
+  // Set status flag immediately so statusline shows On right away
+  setStatusFlag(true);
 
   // Pass transcript path directly if we have it from the hook
   daemon.send({ type: "session-info", sessionId, projectDir, channelName, transcriptPath });
@@ -206,7 +197,6 @@ function startDaemon(channelName?: string) {
 
 function stopDaemon() {
   if (!daemon) return;
-  console.log("[rc] Stopping daemon...");
   daemon.kill("SIGTERM");
   daemon = null;
   setStatusFlag(false);
@@ -215,6 +205,9 @@ function stopDaemon() {
 // ── Start ──
 
 startPipeServer();
+
+// Hot-reload is handled by the daemon itself — it watches its own files
+// and exits with a special code. The auto-restart in daemon.on("exit") picks it up.
 
 // ── Graceful shutdown ──
 

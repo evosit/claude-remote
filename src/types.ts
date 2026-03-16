@@ -121,6 +121,7 @@ export interface ProcessedMessage {
   uuid: string;
   toolName?: string;
   toolUseId?: string;
+  toolInput?: Record<string, unknown>;
   questions?: Array<{
     question: string;
     header: string;

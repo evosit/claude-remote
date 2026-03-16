@@ -5,11 +5,19 @@ import pc from "picocolors";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { CONFIG_DIR } from "./utils.js";
 import type { Config } from "./types.js";
 
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
+const UPDATE_CACHE = path.join(CONFIG_DIR, "update-check.json");
+const CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
+
+// Read our own version from package.json
+const require = createRequire(import.meta.url);
+const PKG_NAME: string = require("../package.json").name;
+const PKG_VERSION: string = require("../package.json").version;
 
 // ── Helpers ──
 
@@ -542,6 +550,88 @@ async function uninstall() {
   p.outro(pc.green("Uninstalled successfully."));
 }
 
+// ── Auto-update ──
+
+interface UpdateCache {
+  lastCheck: number;
+  latestVersion: string;
+}
+
+function compareVersions(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+  }
+  return 0;
+}
+
+function readUpdateCache(): UpdateCache | null {
+  try {
+    return JSON.parse(fs.readFileSync(UPDATE_CACHE, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+function writeUpdateCache(cache: UpdateCache) {
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(UPDATE_CACHE, JSON.stringify(cache));
+  } catch { /* best effort */ }
+}
+
+/** Detect if running from a local dev checkout (npm link / symlink) */
+function isLocalDev(): boolean {
+  try {
+    const realPath = fs.realpathSync(import.meta.dirname);
+    // npm link: the real path won't be inside a global node_modules
+    return !realPath.includes("node_modules");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Non-blocking auto-update: checks npm registry, installs if newer version exists.
+ * Runs entirely in the background — never blocks CLI startup.
+ */
+function autoUpdate() {
+  const cache = readUpdateCache();
+  const now = Date.now();
+
+  // Skip if checked recently
+  if (cache && now - cache.lastCheck < CHECK_INTERVAL) {
+    return;
+  }
+
+  // Fire and forget — don't await
+  fetch(`https://registry.npmjs.org/${PKG_NAME}/latest`, {
+    signal: AbortSignal.timeout(5000),
+  })
+    .then((res) => res.json())
+    .then((data: { version?: string }) => {
+      const latest = data.version;
+      if (!latest) return;
+
+      writeUpdateCache({ lastCheck: now, latestVersion: latest });
+
+      if (compareVersions(latest, PKG_VERSION) <= 0) return;
+
+      // Newer version available — install in background
+      const child = spawn("npm", ["install", "-g", `${PKG_NAME}@${latest}`], {
+        detached: true,
+        stdio: "ignore",
+        shell: true,
+      });
+      child.unref();
+    })
+    .catch(() => {
+      // Network error, offline, etc. — silently ignore
+    });
+}
+
 async function run() {
   const config = loadConfig();
   if (!config) {
@@ -554,6 +644,9 @@ async function run() {
   process.env.DISCORD_BOT_TOKEN = config.discordBotToken;
   process.env.DISCORD_GUILD_ID = config.guildId;
   process.env.DISCORD_CATEGORY_ID = config.categoryId;
+
+  // Check for updates in background (non-blocking, skip if locally linked)
+  if (!isLocalDev()) autoUpdate();
 
   await import("./rc.js");
 }

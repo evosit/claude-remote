@@ -2,12 +2,17 @@
 
 /**
  * SessionStart hook — sends session_id + transcript_path to the rc.ts pipe server.
- * Reads hook payload from stdin, sends it to the named pipe, exits immediately.
+ * Only activates when DISCORD_RC_PIPE env var is set (by rc.ts), so it won't
+ * fire in plain Claude sessions that weren't started via discord-rc.
  */
 
-import { findPipe, sendPipeMessage } from "./pipe-client.js";
+import { sendPipeMessage } from "./pipe-client.js";
 
 async function main() {
+  // Only connect if this Claude session was spawned by discord-rc
+  const pipeName = process.env.DISCORD_RC_PIPE;
+  if (!pipeName) process.exit(0);
+
   // Read stdin (hook payload from Claude Code)
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
@@ -25,11 +30,8 @@ async function main() {
 
   if (!payload.session_id || !payload.transcript_path) process.exit(0);
 
-  const pipe = findPipe();
-  if (!pipe) process.exit(0); // no discord-rc instance running, nothing to do
-
   try {
-    await sendPipeMessage(pipe, {
+    await sendPipeMessage(pipeName, {
       type: "session-register",
       sessionId: payload.session_id,
       transcriptPath: payload.transcript_path,

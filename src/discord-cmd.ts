@@ -17,7 +17,7 @@ async function main() {
   const args = process.argv.slice(2);
   const subcommand = args[0]?.toLowerCase();
 
-  const pipe = findPipe();
+  const pipe = process.env.DISCORD_RC_PIPE || findPipe();
   if (!pipe) {
     console.log("ERROR: No active discord-rc instance. Start Claude with `discord-rc` instead of `claude`.");
     process.exit(1);
