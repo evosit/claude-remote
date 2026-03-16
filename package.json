@@ -1,16 +1,32 @@
 {
-  "name": "discord-rc",
+  "name": "claude-discord-rc",
   "version": "1.0.0",
-  "description": "Discord Remote Control for Claude Code",
+  "description": "Discord Remote Control for Claude Code - monitor and interact with Claude Code sessions from Discord",
   "type": "module",
   "bin": {
     "discord-rc": "dist/cli.js",
     "discord-cmd": "dist/discord-cmd.js"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
-    "start": "node dist/rc.js"
+    "prepublishOnly": "tsc"
   },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "discord",
+    "remote-control",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hoangvu12/discord-rc.git"
+  },
+  "license": "MIT",
   "dependencies": {
     "@clack/prompts": "^1.1.0",
     "chokidar": "^4.0.3",
