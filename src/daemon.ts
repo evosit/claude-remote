@@ -1,11 +1,11 @@
-import { Client, GatewayIntentBits, Events, ChannelType, EmbedBuilder, type TextChannel, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, type MessageComponentInteraction } from "discord.js";
+import { Client, GatewayIntentBits, Events, ChannelType, EmbedBuilder, type TextChannel, type ThreadChannel, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, type MessageComponentInteraction } from "discord.js";
 import chokidar, { type FSWatcher } from "chokidar";
 import fs from "node:fs";
 import { readFile, open } from "node:fs/promises";
 import path from "node:path";
 import { parseJSONLString, processAssistantBlocks, processUserBlocks, processNonConversation, isRewind, walkCurrentBranch } from "./jsonl-parser.js";
-import { renderMessage, renderBatch } from "./discord-renderer.js";
-import { resolveJSONLPath, ID_PREFIX, CONFIG_DIR } from "./utils.js";
+import { renderMessage, renderBatch, renderToolUseEmbed, renderToolUseEmbedWithStatus, renderToolResultThreadMessages, renderPermissionPrompt } from "./discord-renderer.js";
+import { resolveJSONLPath, truncate, ID_PREFIX, CONFIG_DIR } from "./utils.js";
 import type { JSONLMessage, ProcessedMessage, DaemonToParent, SessionInfoMessage } from "./types.js";
 
 // ── State ──
@@ -21,17 +21,24 @@ let lastFileSize = 0;
 let lastMessageUuid: string | null = null;
 const MAX_SET_SIZE = 5000;
 let processedUuids = new Set<string>();
-let pendingToolUseIds = new Set<string>();
 let resolvedToolUseIds = new Set<string>();
-let permissionMessages = new Map<string, { message: import("discord.js").Message; toolUseId: string }>();
-let discordOriginMessages = new Set<string>(); // messages sent from Discord, to avoid echo
+let discordOriginMessages = new Set<string>();
+let currentPermissionMode: string | null = null;
+
+// Thread tracking: toolUseId → { thread, parentMessage, toolInfo }
+const toolUseThreads = new Map<string, {
+  thread: ThreadChannel;
+  message: import("discord.js").Message;
+  toolName: string;
+  content: string;
+}>();
 
 // Rate limiting: 5 messages per 5 seconds
 const RATE_WINDOW = 5000;
 const RATE_LIMIT = 5;
 let messageTimes: number[] = [];
 
-async function rateLimitedSend(ch: TextChannel, payload: import("discord.js").MessageCreateOptions): Promise<import("discord.js").Message | null> {
+async function rateLimitedSend(ch: TextChannel | ThreadChannel, payload: import("discord.js").MessageCreateOptions): Promise<import("discord.js").Message | null> {
   const now = Date.now();
   messageTimes = messageTimes.filter((t) => now - t < RATE_WINDOW);
 
@@ -67,7 +74,8 @@ process.on("message", (msg: SessionInfoMessage) => {
     sessionId = msg.sessionId;
     projectDir = msg.projectDir;
     customChannelName = msg.channelName;
-    jsonlPath = resolveJSONLPath(sessionId, projectDir);
+    // Use transcript path from hook if available, otherwise fall back to resolving it
+    jsonlPath = msg.transcriptPath || resolveJSONLPath(sessionId, projectDir);
     console.log(`[daemon] Session: ${sessionId}`);
     console.log(`[daemon] JSONL: ${jsonlPath}`);
     start();
@@ -168,12 +176,27 @@ const SUMMARY_TEXT_LIMIT = 10;
 async function replayHistory() {
   if (!channel) return;
 
+  // Clean up old threads from previous connections
+  try {
+    const activeThreads = await channel.threads.fetchActive();
+    for (const [, thread] of activeThreads.threads) {
+      try { await thread.delete(); } catch { /* may already be gone */ }
+    }
+  } catch { /* no threads to clean */ }
+
   try {
     const raw = await readFile(jsonlPath, "utf-8");
     lastFileSize = Buffer.byteLength(raw, "utf-8");
 
     const allMessages = parseJSONLString(raw);
     const branch = walkCurrentBranch(allMessages);
+
+    // Track permissionMode from history
+    for (const msg of branch) {
+      if (msg.type === "user" && msg.permissionMode) {
+        currentPermissionMode = msg.permissionMode;
+      }
+    }
 
     // Process all for dedup tracking
     const allProcessed: ProcessedMessage[] = [];
@@ -226,7 +249,7 @@ async function replayHistory() {
       await rateLimitedSend(channel, { embeds: [embed] });
     }
 
-    // Send recent messages in full (batched)
+    // Send recent messages in full (batched — tool results skipped, threads not created for replay)
     for (const payload of renderBatch(recent)) {
       await rateLimitedSend(channel, payload);
     }
@@ -262,8 +285,89 @@ async function flushBatch() {
   const batch = pendingBatch;
   pendingBatch = [];
 
+  // Handle tool-use messages: send embed + create thread
+  for (const pm of batch) {
+    if (pm.type === "tool-use" && pm.toolUseId) {
+      await handleToolUse(pm);
+    }
+  }
+
+  // Handle tool-result messages: post in thread
+  for (const pm of batch) {
+    if ((pm.type === "tool-result" || pm.type === "tool-result-error") && pm.toolUseId) {
+      await handleToolResult(pm);
+    }
+  }
+
+  // Render everything else (user-prompt, assistant-text, etc.) via batch renderer
+  // (renderBatch already skips tool-result types)
   for (const payload of renderBatch(batch)) {
-    await rateLimitedSend(channel, payload);
+    await rateLimitedSend(channel!, payload);
+  }
+}
+
+async function handleToolUse(pm: ProcessedMessage) {
+  if (!channel || !pm.toolUseId) return;
+
+  const embed = renderToolUseEmbed(pm);
+  const sent = await rateLimitedSend(channel, { embeds: [embed] });
+  if (!sent) return;
+
+  try {
+    const threadName = `${pm.toolName} — ${truncate(pm.content.replace(/`/g, ""), 80)}`.slice(0, 100);
+    const thread = await sent.startThread({ name: threadName, autoArchiveDuration: 60 });
+
+    toolUseThreads.set(pm.toolUseId, {
+      thread,
+      message: sent,
+      toolName: pm.toolName || "Unknown",
+      content: pm.content,
+    });
+
+    // Post full tool input in thread
+    await rateLimitedSend(thread, { content: `**Input:** ${pm.content}` });
+
+    // Permission prompt (only if not in bypass mode)
+    if (currentPermissionMode !== "bypassPermissions") {
+      const toolUseId = pm.toolUseId;
+      setTimeout(async () => {
+        if (resolvedToolUseIds.has(toolUseId)) return;
+        const entry = toolUseThreads.get(toolUseId);
+        if (!entry) return;
+        await rateLimitedSend(entry.thread, renderPermissionPrompt(toolUseId, entry.toolName, entry.content));
+      }, 5000);
+    }
+  } catch (err) {
+    console.error("[daemon] Failed to create thread:", err);
+  }
+}
+
+async function handleToolResult(pm: ProcessedMessage) {
+  if (!pm.toolUseId) return;
+
+  resolvedToolUseIds.add(pm.toolUseId);
+  const isError = pm.type === "tool-result-error";
+  const entry = toolUseThreads.get(pm.toolUseId);
+
+  if (entry) {
+    // Post result in thread
+    const threadMessages = renderToolResultThreadMessages(pm.content, isError);
+    for (const msg of threadMessages) {
+      await rateLimitedSend(entry.thread, msg);
+    }
+
+    // Update parent embed with status icon
+    try {
+      const updatedEmbed = renderToolUseEmbedWithStatus(
+        { ...pm, type: "tool-use", toolName: entry.toolName, content: entry.content, uuid: pm.uuid },
+        !isError,
+      );
+      await entry.message.edit({ embeds: [updatedEmbed] });
+    } catch { /* message may be gone */ }
+
+    // Archive thread after result
+    try { await entry.thread.setArchived(true); } catch { /* best effort */ }
+    toolUseThreads.delete(pm.toolUseId);
   }
 }
 
@@ -310,26 +414,24 @@ async function handleFileChange(filePath: string) {
         continue;
       }
 
+      // Track permission mode from user messages
+      if (msg.type === "user" && msg.permissionMode) {
+        currentPermissionMode = msg.permissionMode;
+      }
+
       if (isRewind(msg, lastMessageUuid)) {
         if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
         pendingBatch = [];
         await rateLimitedSend(channel, { content: "⏪ Conversation rewound" });
         processedUuids.clear();
-        pendingToolUseIds.clear();
         resolvedToolUseIds.clear();
       }
 
-      // Track tool_result arrivals to resolve pending permission prompts
+      // Track tool_result arrivals
       if (msg.type === "user" && msg.message && Array.isArray(msg.message.content)) {
         for (const block of msg.message.content) {
           if (block.type === "tool_result") {
             resolvedToolUseIds.add(block.tool_use_id);
-            pendingToolUseIds.delete(block.tool_use_id);
-            const permMsg = permissionMessages.get(block.tool_use_id);
-            if (permMsg) {
-              try { await permMsg.message.edit({ components: [] }); } catch { /* already edited */ }
-              permissionMessages.delete(block.tool_use_id);
-            }
           }
         }
       }
@@ -343,24 +445,6 @@ async function handleFileChange(filePath: string) {
         if (pm.type === "user-prompt" && discordOriginMessages.has(pm.content.trim())) {
           discordOriginMessages.delete(pm.content.trim());
           continue;
-        }
-
-        // Track tool-use for permission timeout
-        if (pm.type === "tool-use" && pm.toolUseId) {
-          const toolUseId = pm.toolUseId;
-          const toolName = pm.toolName || "Unknown";
-          const content = pm.content;
-          const uuid = pm.uuid;
-          setTimeout(async () => {
-            if (resolvedToolUseIds.has(toolUseId)) return;
-            pendingToolUseIds.add(toolUseId);
-            for (const pp of renderMessage({
-              type: "permission-prompt", content, uuid, toolName, toolUseId,
-            })) {
-              const sent = await rateLimitedSend(channel!, pp);
-              if (sent) permissionMessages.set(toolUseId, { message: sent, toolUseId });
-            }
-          }, 2500);
         }
 
         enqueueBatch(pm);
@@ -409,21 +493,17 @@ async function handleInteraction(interaction: import("discord.js").Interaction) 
 
     if (id.startsWith(ID_PREFIX.ALLOW)) {
       const toolUseId = id.slice(ID_PREFIX.ALLOW.length);
-      pendingToolUseIds.delete(toolUseId);
       resolvedToolUseIds.add(toolUseId);
       sendToParent({ type: "pty-write", text: "y" });
       await interaction.update({ content: "✅ Allowed", components: [] });
-      permissionMessages.delete(toolUseId);
       return;
     }
 
     if (id.startsWith(ID_PREFIX.DENY)) {
       const toolUseId = id.slice(ID_PREFIX.DENY.length);
-      pendingToolUseIds.delete(toolUseId);
       resolvedToolUseIds.add(toolUseId);
       sendToParent({ type: "pty-write", text: "n" });
       await interaction.update({ content: "❌ Denied", components: [] });
-      permissionMessages.delete(toolUseId);
       return;
     }
 
