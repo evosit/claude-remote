@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import type { ProcessedMessage } from "./types.js";
 import type { OutgoingMessage } from "./provider.js";
 
@@ -27,6 +28,191 @@ function langFromPath(filePath: string): string {
   return "";
 }
 
+// ── LCS-based diff ──
+
+const CONTEXT_LINES = 2;
+
+/** Find the 1-based line number where `needle` first appears in a file */
+function findStartLine(filePath: string, needle: string): number {
+  try {
+    const content = readFileSync(filePath, "utf-8");
+    const idx = content.indexOf(needle);
+    if (idx === -1) return 1;
+    return content.slice(0, idx).split("\n").length;
+  } catch {
+    return 1;
+  }
+}
+
+/** Compute a minimal unified diff between old and new line arrays */
+function computeDiff(oldLines: string[], newLines: string[], startLine = 1): string[] {
+  const m = oldLines.length;
+  const n = newLines.length;
+
+  // LCS dynamic programming (guard against huge inputs)
+  if (m * n > 90_000) return fallbackDiff(oldLines, newLines, startLine);
+
+  const dp: number[][] = [];
+  for (let i = 0; i <= m; i++) {
+    dp[i] = new Array(n + 1).fill(0);
+  }
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] =
+        oldLines[i - 1] === newLines[j - 1]
+          ? dp[i - 1][j - 1] + 1
+          : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  // Backtrack to build operation list
+  type Op = { type: " " | "-" | "+"; line: string };
+  const ops: Op[] = [];
+  let i = m,
+    j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && oldLines[i - 1] === newLines[j - 1]) {
+      ops.push({ type: " ", line: oldLines[i - 1] });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      ops.push({ type: "+", line: newLines[j - 1] });
+      j--;
+    } else {
+      ops.push({ type: "-", line: oldLines[i - 1] });
+      i--;
+    }
+  }
+  ops.reverse();
+
+  // Reorder each changed hunk: all removals before additions
+  const reordered: Op[] = [];
+  let k = 0;
+  while (k < ops.length) {
+    if (ops[k].type === " ") {
+      reordered.push(ops[k++]);
+    } else {
+      const removed: Op[] = [];
+      const added: Op[] = [];
+      while (k < ops.length && ops[k].type !== " ") {
+        if (ops[k].type === "-") removed.push(ops[k]);
+        else added.push(ops[k]);
+        k++;
+      }
+      reordered.push(...removed, ...added);
+    }
+  }
+
+  // Assign line numbers to each op
+  type NumberedOp = { type: " " | "-" | "+"; line: string; num: number };
+  const numbered: NumberedOp[] = [];
+  let oldNum = startLine;
+  let newNum = startLine;
+  for (const op of reordered) {
+    if (op.type === " ") {
+      numbered.push({ ...op, num: oldNum });
+      oldNum++;
+      newNum++;
+    } else if (op.type === "-") {
+      numbered.push({ ...op, num: oldNum });
+      oldNum++;
+    } else {
+      numbered.push({ ...op, num: newNum });
+      newNum++;
+    }
+  }
+
+  // Find max line number for padding
+  const maxNum = numbered.length ? Math.max(...numbered.map((o) => o.num)) : 0;
+  const pad = String(maxNum).length;
+
+  // Mark which ops are visible (changes + context around them)
+  const isChange = numbered.map((op) => op.type !== " ");
+  const visible = new Array(numbered.length).fill(false);
+  for (let idx = 0; idx < numbered.length; idx++) {
+    if (isChange[idx]) {
+      for (
+        let c = Math.max(0, idx - CONTEXT_LINES);
+        c <= Math.min(numbered.length - 1, idx + CONTEXT_LINES);
+        c++
+      ) {
+        visible[c] = true;
+      }
+    }
+  }
+
+  // Build output with collapsed unchanged regions
+  const lines: string[] = [];
+  let inCollapse = false;
+  for (let idx = 0; idx < numbered.length; idx++) {
+    if (!visible[idx]) {
+      if (!inCollapse) {
+        lines.push(" ...");
+        inCollapse = true;
+      }
+    } else {
+      inCollapse = false;
+      const { type, line, num } = numbered[idx];
+      const n = String(num).padStart(pad);
+      // +/- must be first char for Discord diff syntax highlighting
+      if (type === " ") {
+        lines.push(`  ${n} ${line}`);
+      } else {
+        lines.push(`${type} ${n} ${line}`);
+      }
+    }
+  }
+  return lines;
+}
+
+/** Simple prefix/suffix fallback for very large diffs */
+function fallbackDiff(oldLines: string[], newLines: string[], startLine = 1): string[] {
+  let commonStart = 0;
+  while (
+    commonStart < oldLines.length &&
+    commonStart < newLines.length &&
+    oldLines[commonStart] === newLines[commonStart]
+  )
+    commonStart++;
+  let commonEnd = 0;
+  while (
+    commonEnd < oldLines.length - commonStart &&
+    commonEnd < newLines.length - commonStart &&
+    oldLines[oldLines.length - 1 - commonEnd] ===
+      newLines[newLines.length - 1 - commonEnd]
+  )
+    commonEnd++;
+
+  const maxNum = startLine + Math.max(oldLines.length, newLines.length) - 1;
+  const pad = String(maxNum).length;
+  const ctx = (num: number, line: string) =>
+    `  ${String(num).padStart(pad)} ${line}`;
+  const rem = (num: number, line: string) =>
+    `- ${String(num).padStart(pad)} ${line}`;
+  const add = (num: number, line: string) =>
+    `+ ${String(num).padStart(pad)} ${line}`;
+
+  const lines: string[] = [];
+  if (commonStart > 0) lines.push(" ...");
+  const ctxBefore = Math.max(0, commonStart - CONTEXT_LINES);
+  for (let i = ctxBefore; i < commonStart; i++)
+    lines.push(ctx(startLine + i, oldLines[i]));
+
+  let oldNum = startLine + commonStart;
+  for (const l of oldLines.slice(commonStart, oldLines.length - commonEnd))
+    lines.push(rem(oldNum++, l));
+  let newNum = startLine + commonStart;
+  for (const l of newLines.slice(commonStart, newLines.length - commonEnd))
+    lines.push(add(newNum++, l));
+
+  const ctxEnd = Math.min(oldLines.length, oldLines.length - commonEnd + CONTEXT_LINES);
+  const ctxStartNum = startLine + oldLines.length - commonEnd;
+  for (let i = oldLines.length - commonEnd; i < ctxEnd; i++)
+    lines.push(ctx(ctxStartNum + (i - (oldLines.length - commonEnd)), oldLines[i]));
+  if (commonEnd > 0) lines.push(" ...");
+  return lines;
+}
+
 // ── Tool embed helper ──
 
 export function toolEmbed(description: string, color?: number): OutgoingMessage {
@@ -49,27 +235,9 @@ export function formatToolInput(pm: ProcessedMessage, embedColor?: number): Outg
     const newStr = String(input.new_string || "");
     const lines: string[] = [`**Edit** \`${filePath}\``];
     if (oldStr || newStr) {
+      const startLine = oldStr ? findStartLine(filePath, oldStr) : 1;
       lines.push("```diff");
-      const oldLines = oldStr.split("\n");
-      const newLines = newStr.split("\n");
-      let commonStart = 0;
-      while (commonStart < oldLines.length && commonStart < newLines.length && oldLines[commonStart] === newLines[commonStart]) {
-        commonStart++;
-      }
-      let commonEnd = 0;
-      while (commonEnd < oldLines.length - commonStart && commonEnd < newLines.length - commonStart && oldLines[oldLines.length - 1 - commonEnd] === newLines[newLines.length - 1 - commonEnd]) {
-        commonEnd++;
-      }
-      const removedLines = oldLines.slice(commonStart, oldLines.length - commonEnd);
-      const addedLines = newLines.slice(commonStart, newLines.length - commonEnd);
-      for (let i = 0; i < commonStart; i++) lines.push(`  ${oldLines[i]}`);
-      for (let i = 0; i < Math.max(removedLines.length, addedLines.length); i++) {
-        const oldL = i < removedLines.length ? removedLines[i] : null;
-        const newL = i < addedLines.length ? addedLines[i] : null;
-        if (oldL !== null) lines.push(`- ${oldL}`);
-        if (newL !== null) lines.push(`+ ${newL}`);
-      }
-      for (let i = oldLines.length - commonEnd; i < oldLines.length; i++) lines.push(`  ${oldLines[i]}`);
+      lines.push(...computeDiff(oldStr.split("\n"), newStr.split("\n"), startLine));
       lines.push("```");
     }
     return [embed(lines.join("\n"))];
