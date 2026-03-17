@@ -40,7 +40,11 @@ export async function closePassiveGroup(ctx: SessionContext) {
     const summary = passiveGroupSummary(g.counts);
     await provider.renameThread(g.thread, truncate(`${summary} ✅`, 100));
   } catch { /* rate limited */ }
-  try { await provider.archiveThread(g.thread); } catch { /* best effort */ }
+
+  const hasUnresolved = g.toolUseIds.some((id) => !ctx.resolvedToolUseIds.has(id));
+  if (!hasUnresolved) {
+    try { await provider.archiveThread(g.thread); } catch { /* best effort */ }
+  }
 }
 
 export class PassiveToolHandler implements MessageHandler {
@@ -49,7 +53,6 @@ export class PassiveToolHandler implements MessageHandler {
 
   async handle(pm: ProcessedMessage, ctx: SessionContext): Promise<HandlerResult> {
     if (!isPassiveToolUse(pm)) {
-      // Non-passive tool-use closes the group, then passes through
       await closePassiveGroup(ctx);
       return "pass";
     }
@@ -59,15 +62,13 @@ export class PassiveToolHandler implements MessageHandler {
 
     const name = pm.toolName || "Unknown";
 
-    // Merge into existing group
+    // Merge into existing group (no rename — Discord limits to 2 renames/10min per thread)
     if (toolState.activePassiveGroup) {
       const g = toolState.activePassiveGroup;
       g.counts.set(name, (g.counts.get(name) || 0) + 1);
       g.toolUseIds.push(pm.toolUseId!);
 
       const summary = passiveGroupSummary(g.counts);
-      try { await provider.renameThread(g.thread, truncate(`⏳ ${summary}`, 100)); } catch { /* best effort */ }
-
       toolState.toolUseThreads.set(pm.toolUseId!, {
         thread: g.thread,
         toolName: name,
