@@ -505,7 +505,7 @@ async function handleFileChange(filePath: string) {
       // Detect user interrupt: Claude Code writes a user message with "[Request interrupted by user]"
       if (msg.type === "user" && msg.message && Array.isArray(msg.message.content)) {
         const isInterrupt = (msg.message.content as ContentBlock[]).some(
-          (b) => b.type === "text" && (b as ContentBlockText).text.includes("[Request interrupted by user]"),
+          (b) => b.type === "text" && (b as ContentBlockText).text.startsWith("[Request interrupted by user"),
         );
         if (isInterrupt && activity) {
           if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
@@ -535,6 +535,11 @@ async function handleFileChange(filePath: string) {
             // Text-only assistant message = turn complete
             activity.busy = false;
             activity.update("idle"); // onIdle callback closes passive group
+            if (msg.message!.stop_reason === "max_tokens") {
+              await ctx.provider.send({
+                embed: { description: "⚠️ **Response hit token limit** — output was truncated", color: COLOR.ERROR_RED },
+              });
+            }
             setTimeout(() => activity!.tryDequeue(), 500);
           }
         } else if (msg.type === "user" && msg.message && !activity.busy) {
@@ -544,9 +549,85 @@ async function handleFileChange(filePath: string) {
         }
       }
 
-      // Agent sub-agent progress → forward to parent tool's thread
-      if (msg.type === "progress" && msg.data?.type === "agent_progress" && msg.parentToolUseID) {
-        await forwardAgentProgress(msg);
+      // System events
+      if (msg.type === "system") {
+        if (msg.subtype === "api_error") {
+          const cause = (msg as unknown as Record<string, unknown>).cause as Record<string, unknown> | undefined;
+          const detail = cause?.code ? String(cause.code) : "unknown error";
+          await ctx.provider.send({
+            embed: { description: `⚠️ **API error**: ${detail}`, color: COLOR.ERROR_RED },
+          });
+        } else if (msg.subtype === "compact_boundary") {
+          await ctx.provider.send({ text: "🗜️ **Context compacted**" });
+        }
+        knownUuids.add(msg.uuid);
+        lastMessageUuid = msg.uuid;
+        continue;
+      }
+
+      // Rate limit events
+      if (msg.type === "rate_limit_event") {
+        const info = (msg as unknown as Record<string, unknown>).rate_limit_info as
+          { status?: string; resetsAt?: number; utilization?: number } | undefined;
+        if (info?.status === "rejected") {
+          const resetsIn = info.resetsAt ? Math.max(0, Math.ceil((info.resetsAt - Date.now()) / 1000)) : null;
+          const detail = resetsIn != null ? ` Resets in ${resetsIn}s` : "";
+          await ctx.provider.send({
+            embed: { description: `🚫 **Rate limited**${detail}`, color: COLOR.ERROR_RED },
+          });
+        } else if (info?.status === "allowed_warning") {
+          const pct = info.utilization != null ? ` (${Math.round(info.utilization * 100)}% used)` : "";
+          await ctx.provider.send({
+            embed: { description: `⚠️ **Approaching rate limit**${pct}`, color: 0xf5a623 },
+          });
+        }
+        continue;
+      }
+
+      // Auth errors
+      if (msg.type === "auth_status") {
+        const authMsg = msg as unknown as { isAuthenticating?: boolean; error?: string };
+        if (authMsg.error) {
+          await ctx.provider.send({
+            embed: { description: `🔑 **Auth error**: ${authMsg.error}`, color: COLOR.ERROR_RED },
+          });
+        }
+        continue;
+      }
+
+      // Result messages (session end — only show errors)
+      if (msg.type === "result") {
+        const result = msg as unknown as { subtype?: string; errors?: string[]; stop_reason?: string | null };
+        if (result.subtype && result.subtype !== "success") {
+          const labels: Record<string, string> = {
+            error_max_turns: "Max turns reached",
+            error_during_execution: "Error during execution",
+            error_max_budget_usd: "Budget limit reached",
+            error_max_structured_output_retries: "Structured output failed",
+          };
+          const label = labels[result.subtype] || result.subtype;
+          const detail = result.errors?.length ? `: ${result.errors[0]}` : "";
+          await ctx.provider.send({
+            embed: { description: `🛑 **${label}**${truncate(detail, 200)}`, color: COLOR.ERROR_RED },
+          });
+          if (activity) {
+            activity.busy = false;
+            activity.update("idle");
+          }
+        }
+        continue;
+      }
+
+      // Progress events → forward to parent tool's thread
+      if (msg.type === "progress" && msg.parentToolUseID) {
+        const progressType = msg.data?.type as string | undefined;
+        if (progressType === "agent_progress") {
+          await forwardAgentProgress(msg);
+        } else if (progressType === "bash_progress") {
+          await forwardBashProgress(msg);
+        } else if (progressType === "mcp_progress") {
+          await forwardMcpProgress(msg);
+        }
       }
 
       // Rewind detection (only once per batch to avoid cascading)
@@ -649,6 +730,44 @@ async function forwardAgentProgress(msg: JSONLMessage) {
         }
       }
     }
+  }
+}
+
+/** Forward bash live output to the Bash tool's thread */
+let lastBashOutput = new Map<string, string>();
+
+async function forwardBashProgress(msg: JSONLMessage) {
+  if (!ctx) return;
+  const parentEntry = toolState.toolUseThreads.get(msg.parentToolUseID!);
+  if (!parentEntry?.thread || !hasThreads(ctx.provider)) return;
+
+  const data = msg.data as { output?: string; elapsedTimeSeconds?: number } | undefined;
+  if (!data?.output?.trim()) return;
+
+  // Only send if output changed since last update (bash_progress fires every second)
+  const prev = lastBashOutput.get(msg.parentToolUseID!);
+  if (prev === data.output) return;
+  lastBashOutput.set(msg.parentToolUseID!, data.output);
+
+  await ctx.provider.sendToThread(parentEntry.thread, {
+    text: `\`\`\`\n${truncate(data.output.trim(), 1800)}\n\`\`\``,
+  });
+}
+
+/** Forward MCP tool lifecycle to the MCP tool's thread */
+async function forwardMcpProgress(msg: JSONLMessage) {
+  if (!ctx) return;
+  const parentEntry = toolState.toolUseThreads.get(msg.parentToolUseID!);
+  if (!parentEntry?.thread || !hasThreads(ctx.provider)) return;
+
+  const data = msg.data as { status?: string; serverName?: string; toolName?: string; elapsedTimeMs?: number } | undefined;
+  if (!data?.status) return;
+
+  if (data.status === "completed" && data.elapsedTimeMs != null) {
+    const secs = (data.elapsedTimeMs / 1000).toFixed(1);
+    await ctx.provider.sendToThread(parentEntry.thread, {
+      text: `✅ MCP \`${data.serverName}\` completed in ${secs}s`,
+    });
   }
 }
 

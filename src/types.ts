@@ -31,7 +31,7 @@ export type ContentBlock =
   | ContentBlockThinking;
 
 export interface JSONLMessage {
-  type: "assistant" | "user" | "system" | "progress" | "file-history-snapshot" | "queue-operation" | "last-prompt";
+  type: "assistant" | "user" | "system" | "progress" | "result" | "rate_limit_event" | "auth_status" | "tool_use_summary" | "tool_progress" | "prompt_suggestion" | "file-history-snapshot" | "queue-operation" | "last-prompt";
   uuid: string;
   parentUuid?: string;
   isSidechain?: boolean;
@@ -43,6 +43,7 @@ export interface JSONLMessage {
     role: "assistant" | "user";
     content: ContentBlock[] | string;
     model?: string;
+    stop_reason?: string | null;
   };
   data?: Record<string, unknown>;
   /** Parent Agent tool_use ID (for progress messages) */
