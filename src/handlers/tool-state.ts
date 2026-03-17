@@ -27,10 +27,9 @@ export const toolState = {
 
   /** Active passive tool group (Read/Grep/Glob) */
   activePassiveGroup: null as {
-    inlineMessage: ProviderMessage | null;
     counts: Map<string, number>;
     toolUseIds: Set<string>;
-    /** Buffered results for inline display */
+    /** Buffered results for thread display on close */
     results: Array<{ content: string; isError: boolean; images?: Array<{ mediaType: string; data: string }> }>;
   } | null,
 

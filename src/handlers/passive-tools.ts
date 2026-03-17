@@ -1,7 +1,6 @@
 import type { MessageHandler, SessionContext, HandlerResult } from "../handler.js";
 import type { ProcessedMessage } from "../types.js";
-import type { ProviderMessage } from "../provider.js";
-import { hasThreads, editOrSend } from "../provider.js";
+import { hasThreads } from "../provider.js";
 import { toolState, PASSIVE_TOOLS } from "./tool-state.js";
 import { renderToolResultThreadMessages, resultColor, COLOR } from "../discord-renderer.js";
 import { truncate, mimeToExt } from "../utils.js";
@@ -35,15 +34,10 @@ export async function closePassiveGroup(ctx: SessionContext) {
     const desc = combinedResult
       ? `${icon} ${summary}\n\`\`\`\n${truncate(combinedResult, 3900)}\n\`\`\``
       : `${icon} ${summary}`;
-    await editOrSend(provider, g.inlineMessage, {
+    await provider.send({
       embed: { description: desc, color: resultColor(hasError) },
     });
     return;
-  }
-
-  // Always use thread — delete inline embed
-  if (g.inlineMessage) {
-    try { await provider.delete(g.inlineMessage); } catch { /* already gone */ }
   }
 
   const thread = await provider.createThread(truncate(`${summary} ${icon}`, 100));
@@ -51,7 +45,6 @@ export async function closePassiveGroup(ctx: SessionContext) {
     for (const msg of renderToolResultThreadMessages(r.content, r.isError)) {
       await provider.sendToThread(thread, { text: msg.content });
     }
-    // Send images from this result
     if (r.images?.length) {
       for (let i = 0; i < r.images.length; i++) {
         const img = r.images[i];
@@ -79,7 +72,7 @@ export class PassiveToolHandler implements MessageHandler {
 
     const name = pm.toolName || "Unknown";
 
-    // Merge into existing group — no API call needed
+    // Merge into existing group
     if (toolState.activePassiveGroup) {
       const g = toolState.activePassiveGroup;
       g.counts.set(name, (g.counts.get(name) || 0) + 1);
@@ -94,20 +87,8 @@ export class PassiveToolHandler implements MessageHandler {
       return "consumed";
     }
 
-    // Start new group — send inline embed
+    // Start new group (no inline embed — thread created on close)
     const counts = new Map<string, number>([[name, 1]]);
-
-    let inlineMessage: ProviderMessage | null = null;
-    try {
-      inlineMessage = await ctx.provider.send({
-        embed: {
-          description: `⏳ ${passiveGroupSummary(counts)}`,
-          color: COLOR.TOOL,
-        },
-      });
-    } catch (err) {
-      console.error("[passive-tools] Failed to send inline embed:", err);
-    }
 
     toolState.toolUseThreads.set(pm.toolUseId!, {
       thread: null,
@@ -116,7 +97,6 @@ export class PassiveToolHandler implements MessageHandler {
     });
 
     toolState.activePassiveGroup = {
-      inlineMessage,
       counts,
       toolUseIds: new Set([pm.toolUseId!]),
       results: [],

@@ -3,6 +3,7 @@ import type { ProcessedMessage } from "../types.js";
 import type { ProviderThread } from "../provider.js";
 import { hasThreads, editOrSend } from "../provider.js";
 import { toolState, INLINE_RESULT_THRESHOLD } from "./tool-state.js";
+import { closePassiveGroup } from "./passive-tools.js";
 import { renderToolResultThreadMessages, resultColor } from "../discord-renderer.js";
 import { truncate, mimeToExt } from "../utils.js";
 
@@ -83,11 +84,14 @@ export class ToolResultHandler implements MessageHandler {
     const label = `**${entry.toolName}** — \`${truncate(entry.content, 80)}\``;
     const color = resultColor(isError);
 
-    // Passive group results → buffer for display at close
+    // Passive group results → buffer, auto-close when all results are in
     const group = toolState.activePassiveGroup;
     if (group && group.toolUseIds.has(pm.toolUseId)) {
       group.results.push({ content: pm.content, isError, images: pm.images });
       toolState.toolUseThreads.delete(pm.toolUseId);
+      if (group.results.length >= group.toolUseIds.size) {
+        await closePassiveGroup(ctx);
+      }
       return "consumed";
     }
 
