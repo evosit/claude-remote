@@ -42,6 +42,7 @@ export interface JSONLMessage {
   message?: {
     role: "assistant" | "user";
     content: ContentBlock[] | string;
+    model?: string;
   };
   data?: Record<string, unknown>;
   /** Parent Agent tool_use ID (for progress messages) */

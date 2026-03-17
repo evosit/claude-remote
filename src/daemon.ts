@@ -495,6 +495,32 @@ async function handleFileChange(filePath: string) {
         ctx.permissionMode = msg.permissionMode;
       }
 
+      // Skip synthetic assistant messages (truncated stubs from interrupts)
+      if (msg.type === "assistant" && msg.message?.model === "<synthetic>") {
+        knownUuids.add(msg.uuid);
+        lastMessageUuid = msg.uuid;
+        continue;
+      }
+
+      // Detect user interrupt: Claude Code writes a user message with "[Request interrupted by user]"
+      if (msg.type === "user" && msg.message && Array.isArray(msg.message.content)) {
+        const isInterrupt = (msg.message.content as ContentBlock[]).some(
+          (b) => b.type === "text" && (b as ContentBlockText).text.includes("[Request interrupted by user]"),
+        );
+        if (isInterrupt && activity) {
+          if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
+          pendingBatch = [];
+          activity.busy = false;
+          activity.stopOverrideUntil = Date.now() + 3000;
+          activity.update("idle");
+          await ctx.provider.send({ text: "⏹️ **Interrupted** from CLI" });
+          setTimeout(() => activity!.tryDequeue(), 3500);
+          knownUuids.add(msg.uuid);
+          lastMessageUuid = msg.uuid;
+          continue;
+        }
+      }
+
       // Any JSONL event while busy resets the idle safety timer
       if (activity?.busy) activity.resetIdleTimer();
 
