@@ -647,7 +647,7 @@ async function handleFileChange(filePath: string) {
         continue;
       }
 
-      // Result messages (session end — only show errors)
+      // Result messages — authoritative turn-completion signal
       if (msg.type === "result") {
         const result = msg as unknown as { subtype?: string; errors?: string[]; stop_reason?: string | null };
         if (result.subtype && result.subtype !== "success") {
@@ -662,10 +662,12 @@ async function handleFileChange(filePath: string) {
           await ctx.provider.send({
             embed: { description: `🛑 **${label}**${truncate(detail, 200)}`, color: COLOR.ERROR_RED },
           });
-          if (activity) {
-            activity.busy = false;
-            activity.update("idle");
-          }
+        }
+        // Always transition to idle on any result (success or error)
+        if (activity) {
+          activity.busy = false;
+          activity.update("idle");
+          setTimeout(() => activity!.tryDequeue(), 500);
         }
         continue;
       }
