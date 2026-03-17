@@ -2,7 +2,7 @@
 
 /**
  * Claude Code statusline script.
- * Shows "Discord RC: On/Off" alongside model info in the status bar.
+ * Shows "Remote: On/Off" alongside model info in the status bar.
  *
  * Receives JSON session data on stdin from Claude Code.
  * Prints formatted status text to stdout.
@@ -55,7 +55,7 @@ process.stdin.on("end", () => {
     parts.push(`$${cost.toFixed(3)}`);
   }
 
-  parts.push(`Discord RC: ${rcStatus}`);
+  parts.push(`Remote: ${rcStatus}`);
 
   process.stdout.write(parts.join("  "));
 });

@@ -100,6 +100,9 @@ export class ActivityManager {
     this.resetIdleTimer();
     this.ctx.originMessages.add(next.text.trim());
     this.sendToParent({ type: "pty-write", text: next.text });
+    if (next.text.includes("\n")) {
+      setTimeout(() => this.sendToParent({ type: "pty-write", text: "\r", raw: true }), 200);
+    }
     this.update("thinking");
     this.provider.send({
       embed: {

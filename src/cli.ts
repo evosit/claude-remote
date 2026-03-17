@@ -67,7 +67,7 @@ disable-model-invocation: true
 allowed-tools: Bash
 ---
 
-Run the discord-cmd CLI to toggle/control Discord sync. Pass through any arguments the user provided.
+Run the discord-cmd CLI to toggle/control remote sync. Pass through any arguments the user provided.
 
 \`\`\`bash
 discord-cmd $ARGUMENTS
@@ -92,10 +92,10 @@ Print the output to the user. Do not add any extra commentary.
     command: getStatuslineCommand(),
   };
 
-  // Build hooks — clean any existing discord-rc hooks first, then add ours
+  // Build hooks — clean any existing claude-remote hooks first, then add ours
   const hooks = (settings.hooks || {}) as Record<string, unknown[]>;
 
-  // Clean old discord-rc hooks from all event types
+  // Clean old claude-remote hooks from all event types
   for (const eventType of ["UserPromptSubmit", "SessionStart"]) {
     if (Array.isArray(hooks[eventType])) {
       hooks[eventType] = hooks[eventType].filter((entry: unknown) => {
@@ -140,7 +140,7 @@ function uninstallHooksAndStatusline() {
     delete settings.statusLine;
   }
 
-  // Remove discord-rc hooks
+  // Remove claude-remote hooks
   const hooks = settings.hooks as Record<string, unknown[]> | undefined;
   if (hooks) {
     for (const eventType of ["UserPromptSubmit", "SessionStart"]) {
@@ -161,7 +161,7 @@ function uninstallHooksAndStatusline() {
 
 // ── Shell alias management ──
 
-const ALIAS_MARKER = "# discord-rc-alias";
+const ALIAS_MARKER = "# claude-remote-alias";
 
 type ShellType = "powershell" | "pwsh" | "gitbash" | "cmd";
 
@@ -183,7 +183,7 @@ function getAliasTargets(): AliasTarget[] {
       targets.push({
         shell: "powershell",
         profilePath: psProfile,
-        aliasLine: `function claude { discord-rc @args } ${ALIAS_MARKER}`,
+        aliasLine: `function claude { claude-remote @args } ${ALIAS_MARKER}`,
         description: "PowerShell 5",
       });
     }
@@ -196,7 +196,7 @@ function getAliasTargets(): AliasTarget[] {
       targets.push({
         shell: "pwsh",
         profilePath: pwshProfile,
-        aliasLine: `function claude { discord-rc @args } ${ALIAS_MARKER}`,
+        aliasLine: `function claude { claude-remote @args } ${ALIAS_MARKER}`,
         description: "PowerShell 7",
       });
     }
@@ -206,7 +206,7 @@ function getAliasTargets(): AliasTarget[] {
   targets.push({
     shell: "gitbash",
     profilePath: path.join(home, ".bashrc"),
-    aliasLine: `claude() { discord-rc "$@"; } ${ALIAS_MARKER}`,
+    aliasLine: `claude() { claude-remote "$@"; } ${ALIAS_MARKER}`,
     description: "Git Bash",
   });
 
@@ -214,7 +214,7 @@ function getAliasTargets(): AliasTarget[] {
   targets.push({
     shell: "cmd",
     profilePath: path.join(home, ".local", "bin", "claude.cmd"),
-    aliasLine: "@echo off\ndiscord-rc %*",
+    aliasLine: "@echo off\nclaude-remote %*",
     description: "CMD",
   });
 
@@ -320,7 +320,7 @@ async function findExistingCategory(token: string, guildId: string, name: string
 // ── Commands ──
 
 async function setup() {
-  p.intro(pc.bgCyan(pc.black(" discord-rc ")));
+  p.intro(pc.bgCyan(pc.black(" claude-remote ")));
 
   const existing = loadConfig();
 
@@ -398,7 +398,7 @@ async function setup() {
     p.log.step(`Server: ${pc.green(guilds[0].name)}`);
   } else {
     const selected = await p.select({
-      message: "Which server should Discord RC use?",
+      message: "Which server should Claude Remote use?",
       options: guilds.map((g) => ({ value: g.id, label: g.name })),
     });
 
@@ -451,7 +451,7 @@ async function setup() {
   // ── Alias setup ──
 
   const aliasSetup = await p.confirm({
-    message: `Set up ${pc.cyan("claude")} alias? (so you type ${pc.bold("claude")} instead of ${pc.bold("discord-rc")})`,
+    message: `Set up ${pc.cyan("claude")} alias? (so you type ${pc.bold("claude")} instead of ${pc.bold("claude-remote")})`,
     initialValue: true,
   });
 
@@ -478,7 +478,7 @@ async function setup() {
   // ── Summary ──
 
   const guildName = guilds.find((g) => g.id === guildId)?.name || guildId;
-  const cmdName = (!p.isCancel(aliasSetup) && aliasSetup) ? "claude" : "discord-rc";
+  const cmdName = (!p.isCancel(aliasSetup) && aliasSetup) ? "claude" : "claude-remote";
 
   p.note(
     [
@@ -499,10 +499,10 @@ async function setup() {
 }
 
 async function uninstall() {
-  p.intro(pc.bgRed(pc.white(" discord-rc uninstall ")));
+  p.intro(pc.bgRed(pc.white(" claude-remote uninstall ")));
 
   const confirmed = await p.confirm({
-    message: "Remove Discord RC configuration and Claude Code hook?",
+    message: "Remove Claude Remote configuration and Claude Code hook?",
     initialValue: false,
   });
 
@@ -543,7 +543,7 @@ async function uninstall() {
   ]);
 
   p.note(
-    `You can also run: ${pc.bold("npm uninstall -g discord-rc")}`,
+    `You can also run: ${pc.bold("npm uninstall -g @hoangvu12/claude-remote")}`,
     "Optional cleanup"
   );
 
@@ -635,8 +635,8 @@ function autoUpdate() {
 async function run() {
   const config = loadConfig();
   if (!config) {
-    p.intro(pc.bgYellow(pc.black(" discord-rc ")));
-    p.log.error("Not set up yet. Run " + pc.bold("discord-rc setup") + " first.");
+    p.intro(pc.bgYellow(pc.black(" claude-remote ")));
+    p.log.error("Not set up yet. Run " + pc.bold("claude-remote setup") + " first.");
     p.outro("");
     process.exit(1);
   }
@@ -670,13 +670,13 @@ switch (command) {
   case "--help":
   case "-h":
     console.log(`
-  ${pc.bold("discord-rc")} — Discord Remote Control for Claude Code
+  ${pc.bold("claude-remote")} — Remote Control for Claude Code
 
   ${pc.dim("Commands:")}
-    ${pc.cyan("discord-rc")}              Start Claude Code with RC support
-    ${pc.cyan("discord-rc setup")}        Configure bot token, channel, and install hook
-    ${pc.cyan("discord-rc uninstall")}    Remove hook and config
-    ${pc.cyan("discord-rc help")}         Show this help
+    ${pc.cyan("claude-remote")}              Start Claude Code with remote control
+    ${pc.cyan("claude-remote setup")}        Configure provider, install hook
+    ${pc.cyan("claude-remote uninstall")}    Remove hook and config
+    ${pc.cyan("claude-remote help")}         Show this help
 `);
     break;
   default:

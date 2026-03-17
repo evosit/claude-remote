@@ -200,7 +200,7 @@ async function start() {
             const resp = await fetch(att.url);
             const buf = Buffer.from(await resp.arrayBuffer());
             const ext = att.filename.split(".").pop() || "png";
-            const tmpPath = path.join(os.tmpdir(), `discord-rc-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
+            const tmpPath = path.join(os.tmpdir(), `claude-remote-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
             fs.writeFileSync(tmpPath, buf);
             tempFiles.add(tmpPath);
             paths.push(tmpPath);
@@ -233,6 +233,10 @@ async function start() {
       activity!.resetIdleTimer();
       ctx!.originMessages.add(finalText);
       sendToParent({ type: "pty-write", text: finalText });
+      // For multiline messages, submit separately after the paste is processed
+      if (finalText.includes("\n")) {
+        setTimeout(() => sendToParent({ type: "pty-write", text: "\r", raw: true }), 200);
+      }
       activity!.update("thinking", client);
     });
 

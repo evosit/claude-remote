@@ -1,15 +1,22 @@
-# claude-discord-rc
+# claude-remote
 
-Discord Remote Control for Claude Code. Monitor and interact with your Claude Code sessions from Discord on your phone.
+Remote Control for Claude Code. Monitor and interact with your Claude Code sessions from your phone.
 
 ## What it does
 
-- Mirrors your Claude Code terminal session to a Discord channel in real time
-- Send messages from Discord and they appear in Claude's terminal
-- Approve/deny tool permissions from Discord via buttons
-- Each session gets its own channel under a "Claude RC" category
+- Mirrors your Claude Code terminal session to a messaging channel in real time
+- Send messages from your phone and they appear in Claude's terminal
+- Approve/deny tool permissions via buttons
+- Each session gets its own channel
 - Resumes the same channel when you reconnect to an existing session
-- Shows "Discord RC: On/Off" in Claude Code's statusline
+- Shows "Remote: On/Off" in Claude Code's statusline
+
+## Providers
+
+Currently supported:
+- **Discord** — mirrors sessions to Discord channels with embeds, buttons, and slash commands
+
+More providers planned (Telegram, Slack, etc.)
 
 ## Requirements
 
@@ -21,13 +28,13 @@ Discord Remote Control for Claude Code. Monitor and interact with your Claude Co
 ## Install
 
 ```bash
-npm install -g claude-discord-rc
+npm install -g @hoangvu12/claude-remote
 ```
 
 ## Setup
 
 ```bash
-discord-rc setup
+claude-remote setup
 ```
 
 This will:
@@ -36,7 +43,7 @@ This will:
 3. Create a "Claude RC" category in your server
 4. Install the `/discord` command into Claude Code
 5. Install a statusline showing sync status
-6. Optionally set up a `claude` shell alias so you can type `claude` instead of `discord-rc`
+6. Optionally set up a `claude` shell alias so you can type `claude` instead of `claude-remote`
 
 ### Creating the Discord bot
 
@@ -53,7 +60,7 @@ This will:
 Start Claude Code through the wrapper:
 
 ```bash
-discord-rc
+claude-remote
 ```
 
 Or if you set up the alias during setup:
@@ -65,9 +72,9 @@ claude
 All arguments are passed through to Claude Code:
 
 ```bash
-discord-rc --resume
-discord-rc -p "fix the login bug"
-discord-rc --dangerously-skip-permissions
+claude-remote --resume
+claude-remote -p "fix the login bug"
+claude-remote --dangerously-skip-permissions
 ```
 
 ### Toggle Discord sync
@@ -107,7 +114,7 @@ Terminal                    Named Pipe IPC              Discord
                                                      buttons)
 ```
 
-1. `discord-rc` spawns `claude.exe` in a pseudo-terminal (PTY)
+1. `claude-remote` spawns `claude.exe` in a pseudo-terminal (PTY)
 2. A named pipe server listens for `/discord` commands
 3. When enabled, a daemon process connects to Discord and watches the JSONL session file
 4. New JSONL lines are parsed, filtered (internal/system messages removed), batched, and rendered as Discord embeds
@@ -127,8 +134,8 @@ Rapid tool calls are batched (600ms debounce) into single Discord messages with 
 ## Uninstall
 
 ```bash
-discord-rc uninstall
-npm uninstall -g claude-discord-rc
+claude-remote uninstall
+npm uninstall -g @hoangvu12/claude-remote
 ```
 
 ## Project structure

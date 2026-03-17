@@ -2,15 +2,15 @@
 
 /**
  * SessionStart hook — sends session_id + transcript_path to the rc.ts pipe server.
- * Only activates when DISCORD_RC_PIPE env var is set (by rc.ts), so it won't
- * fire in plain Claude sessions that weren't started via discord-rc.
+ * Only activates when CLAUDE_REMOTE_PIPE env var is set (by rc.ts), so it won't
+ * fire in plain Claude sessions that weren't started via claude-remote.
  */
 
 import { sendPipeMessage } from "./pipe-client.js";
 
 async function main() {
-  // Only connect if this Claude session was spawned by discord-rc
-  const pipeName = process.env.DISCORD_RC_PIPE;
+  // Only connect if this Claude session was spawned by claude-remote
+  const pipeName = process.env.CLAUDE_REMOTE_PIPE;
   if (!pipeName) process.exit(0);
 
   // Read stdin (hook payload from Claude Code)

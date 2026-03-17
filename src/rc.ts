@@ -9,7 +9,7 @@ import type { DaemonToParent, PipeMessage } from "./types.js";
 
 // ── Constants ──
 
-const PIPE_NAME = `\\\\.\\pipe\\discord-rc-${process.pid}`;
+const PIPE_NAME = `\\\\.\\pipe\\claude-remote-${process.pid}`;
 
 // Use claude.exe explicitly to bypass any .cmd shim aliases we installed
 const CLAUDE_BIN = "claude.exe";
@@ -26,7 +26,7 @@ let lastChannelId: string | null = null;
 // ── Spawn Claude in PTY ──
 
 // Set env var so the SessionStart hook only connects to THIS rc instance
-process.env.DISCORD_RC_PIPE = PIPE_NAME;
+process.env.CLAUDE_REMOTE_PIPE = PIPE_NAME;
 
 const proc = pty.spawn(CLAUDE_BIN, process.argv.slice(2), {
   name: "xterm-color",
@@ -167,7 +167,7 @@ function startDaemon(channelName?: string) {
   });
 
   // Log daemon output to file for debugging
-  const logStream = fs.createWriteStream(path.join(os.homedir(), ".discord-rc", "daemon.log"), { flags: "a" });
+  const logStream = fs.createWriteStream(path.join(os.homedir(), ".claude-remote", "daemon.log"), { flags: "a" });
   daemon.stdout?.pipe(logStream);
   daemon.stderr?.pipe(logStream);
 
@@ -177,7 +177,7 @@ function startDaemon(channelName?: string) {
         proc.write(msg.text);
       } else if (msg.text.includes("\n")) {
         // Wrap multiline text in bracketed paste so Ink treats it as a single paste
-        proc.write(`\x1b[200~${msg.text}\x1b[201~\r`);
+        proc.write(`\x1b[200~${msg.text}\x1b[201~`);
       } else {
         proc.write(msg.text + "\r");
       }

@@ -4,7 +4,7 @@ import os from "node:os";
 
 // ── Shared paths ──
 
-export const CONFIG_DIR = path.join(os.homedir(), ".discord-rc");
+export const CONFIG_DIR = path.join(os.homedir(), ".claude-remote");
 export const STATUS_FLAG = path.join(CONFIG_DIR, "active");
 export const PIPE_REGISTRY = path.join(CONFIG_DIR, "pipes");
 

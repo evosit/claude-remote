@@ -23,9 +23,9 @@ async function main() {
     process.exit(0);
   }
 
-  const pipe = process.env.DISCORD_RC_PIPE || findPipe();
+  const pipe = process.env.CLAUDE_REMOTE_PIPE || findPipe();
   if (!pipe) {
-    process.stderr.write("[discord-rc] No active rc instance found. Start Claude with `discord-rc` instead of `claude`.\n");
+    process.stderr.write("[claude-remote] No active instance found. Start Claude with `claude-remote` instead of `claude`.\n");
     process.exit(2);
   }
 
@@ -63,6 +63,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  process.stderr.write(`[discord-rc] Hook error: ${err}\n`);
+  process.stderr.write(`[claude-remote] Hook error: ${err}\n`);
   process.exit(0);
 });
