@@ -7,8 +7,8 @@ import { formatToolInput } from "../format-tool.js";
 import { truncate, ID_PREFIX } from "../utils.js";
 import { COLOR } from "../discord-renderer.js";
 
-/** Delay before escalating an unresolved tool to a thread */
-const ESCALATE_DELAY = 5000;
+/** Short window to wait for a fast result before escalating to thread */
+const FAST_RESULT_WINDOW = 300;
 /** Interval for progress updates in threads */
 const PROGRESS_INTERVAL = 15_000;
 /** Tools that always escalate to a thread immediately */
@@ -100,13 +100,13 @@ export class ToolUseHandler implements MessageHandler {
     // Cache formatted input for thread context
     const inputMessages = formatToolInput(pm, COLOR.TOOL);
 
-    // Send inline embed (skipped for tools that go straight to thread)
-    const inlineMsg = immediate ? null : await provider.send({
+    // Only send inline embed for providers without thread support (fallback)
+    const inlineMsg = (!immediate && !hasThreads(provider)) ? await provider.send({
       embed: {
         description: `🔧 **${name}** ${cleanContent}`,
         color: COLOR.TOOL,
       },
-    });
+    }) : null;
 
     const entry: ToolEntry = {
       thread: null,
@@ -124,12 +124,12 @@ export class ToolUseHandler implements MessageHandler {
         // Bash/Agent → thread immediately
         await escalateToThread(entry, toolUseId, ctx, provider);
       } else {
-        // Other tools → escalate after delay if still unresolved
+        // Short window for fast results — escalate to thread if no result arrives
         const timer = setTimeout(async () => {
           this.pendingTimers.delete(timer);
           if (ctx.resolvedToolUseIds.has(toolUseId)) return;
           await escalateToThread(entry, toolUseId, ctx, provider);
-        }, ESCALATE_DELAY);
+        }, FAST_RESULT_WINDOW);
         this.pendingTimers.add(timer);
       }
     }
