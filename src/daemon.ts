@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Events, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, type TextChannel, type MessageComponentInteraction } from "discord.js";
+import { Client, GatewayIntentBits, Events, ChannelType, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, Options, type TextChannel, type MessageComponentInteraction } from "discord.js";
 import chokidar, { type FSWatcher } from "chokidar";
 import fs from "node:fs";
 import { readFile, open } from "node:fs/promises";
@@ -27,7 +27,7 @@ let customChannelName: string | undefined;
 let watcher: FSWatcher | null = null;
 let lastFileSize = 0;
 let lastMessageUuid: string | null = null;
-const MAX_SET_SIZE = 5000;
+const MAX_SET_SIZE = 3000;
 let processedUuids = new Set<string>();
 let knownUuids = new Set<string>();
 
@@ -85,6 +85,25 @@ async function start() {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
     ],
+    makeCache: Options.cacheWithLimits({
+      MessageManager: 10,
+      GuildMemberManager: 0,
+      GuildBanManager: 0,
+      ReactionManager: 0,
+      ReactionUserManager: 0,
+      PresenceManager: 0,
+      VoiceStateManager: 0,
+      GuildEmojiManager: 0,
+      GuildStickerManager: 0,
+      GuildInviteManager: 0,
+      GuildScheduledEventManager: 0,
+      ThreadMemberManager: 0,
+      AutoModerationRuleManager: 0,
+    }),
+    sweepers: {
+      ...Options.DefaultSweeperSettings,
+      messages: { interval: 300, lifetime: 600 },
+    },
   });
 
   client.on(Events.Error, (err) => console.error("[daemon] Discord error:", err));
@@ -686,11 +705,12 @@ async function handleFileChange(filePath: string) {
 
       knownUuids.add(msg.uuid);
 
-      // Track tool_result arrivals
+      // Track tool_result arrivals and clean up associated state
       if (msg.type === "user" && msg.message && Array.isArray(msg.message.content)) {
         for (const block of msg.message.content) {
           if (block.type === "tool_result") {
             ctx.resolvedToolUseIds.add(block.tool_use_id);
+            lastBashOutput.delete(block.tool_use_id);
           }
         }
       }
@@ -853,7 +873,9 @@ function saveSessionChannel(sid: string, channelId: string): void {
 
 const RELOAD_EXIT_CODE = 42;
 
-chokidar.watch(path.resolve(import.meta.dirname, "daemon.js"), { ignoreInitial: true }).on("change", () => {
+const DAEMON_JS_PATH = path.resolve(import.meta.dirname, "daemon.js");
+fs.watchFile(DAEMON_JS_PATH, { interval: 1000 }, (curr, prev) => {
+  if (curr.mtimeMs === prev.mtimeMs) return;
   console.log("[daemon] Code changed, exiting for reload...");
   if (provider) {
     provider.send({ text: "🔄 **Reloading...**" }).catch(() => {}).finally(() => process.exit(RELOAD_EXIT_CODE));
@@ -872,6 +894,7 @@ async function cleanup() {
   if (activity) activity.destroy();
   if (pipeline) pipeline.destroy();
   if (watcher) await watcher.close();
+  fs.unwatchFile(DAEMON_JS_PATH);
   // Clean up temp image files
   for (const f of tempFiles) {
     try { fs.unlinkSync(f); } catch { /* may already be gone */ }
