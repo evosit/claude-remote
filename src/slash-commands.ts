@@ -59,6 +59,19 @@ export async function setupSlashCommands(
           .setRequired(false)
       ),
     new SlashCommandBuilder()
+      .setName("model")
+      .setDescription("Switch Claude model")
+      .addStringOption((opt) =>
+        opt.setName("model")
+          .setDescription("Target model")
+          .setRequired(true)
+          .addChoices(
+            { name: "Sonnet", value: "sonnet" },
+            { name: "Opus", value: "opus" },
+            { name: "Haiku", value: "haiku" },
+          )
+      ),
+    new SlashCommandBuilder()
       .setName("stop")
       .setDescription("Interrupt Claude (like pressing Escape)"),
     new SlashCommandBuilder()
@@ -138,6 +151,12 @@ export async function setupSlashCommands(
         activity.busy = false;
         activity.update("idle", client);
         await cmd.reply({ content: "📦 Compacting context...", ephemeral: true });
+        break;
+      }
+      case "model": {
+        const model = cmd.options.getString("model", true);
+        sendToParent({ type: "pty-write", text: `/model ${model}`, raw: false });
+        await cmd.reply({ content: `🤖 Switching to \`${model}\`...`, ephemeral: true });
         break;
       }
       case "stop":

@@ -6,7 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { parseJSONLString, processAssistantBlocks, processUserBlocks, processNonConversation, walkCurrentBranch, getToolInputPreview } from "./jsonl-parser.js";
 import { renderBatch, COLOR } from "./discord-renderer.js";
-import { resolveJSONLPath, ID_PREFIX, CONFIG_DIR, capSet, truncate, extractToolResultText, extractToolResultImages, mimeToExt } from "./utils.js";
+import { resolveJSONLPath, ID_PREFIX, CONFIG_DIR, capSet, truncate, extractToolResultText, extractToolResultImages, mimeToExt, isLocalCommand } from "./utils.js";
 import type { JSONLMessage, ProcessedMessage, ContentBlock, ContentBlockToolUse, ContentBlockText, ContentBlockToolResult, DaemonToParent, SessionInfoMessage } from "./types.js";
 import { DiscordProvider } from "./providers/discord.js";
 import { createPipeline } from "./create-pipeline.js";
@@ -605,9 +605,16 @@ async function handleFileChange(filePath: string) {
             setTimeout(() => activity!.tryDequeue(), 500);
           }
         } else if (msg.type === "user" && msg.message && !activity.busy) {
-          activity.busy = true;
-          activity.resetIdleTimer();
-          activity.update("thinking");
+          const content = msg.message.content;
+          const firstText = Array.isArray(content)
+            ? (content as ContentBlock[]).find((b) => b.type === "text") as ContentBlockText | undefined
+            : undefined;
+          const text = typeof content === "string" ? content : firstText?.text || "";
+          if (!isLocalCommand(text)) {
+            activity.busy = true;
+            activity.resetIdleTimer();
+            activity.update("thinking");
+          }
         }
       }
 

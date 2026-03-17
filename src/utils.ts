@@ -79,6 +79,18 @@ export function mimeToExt(mediaType: string): string {
   return map[mediaType] || "png";
 }
 
+// ── Claude Code local-only CLI commands (don't trigger API calls) ──
+
+const LOCAL_COMMANDS = [
+  "/model", "/fast", "/login", "/logout",
+  "/help", "/cost", "/mcp", "/stats",
+];
+
+/** Check if a message is a local-only CLI command that won't trigger an API call */
+export function isLocalCommand(text: string): boolean {
+  return LOCAL_COMMANDS.some((c) => text === c || text.startsWith(c + " "));
+}
+
 // ── Permission mode cycling (matches Claude Code's Shift+Tab order) ──
 
 const MODE_CYCLE = ["default", "acceptEdits", "plan", "bypassPermissions"] as const;

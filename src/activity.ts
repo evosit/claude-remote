@@ -87,6 +87,7 @@ export class ActivityManager {
     }, IDLE_TIMEOUT);
   }
 
+
   enqueue(text: string): QueuedMessage {
     const msg: QueuedMessage = { id: this.nextId++, text, addedAt: Date.now() };
     this.queue.push(msg);
