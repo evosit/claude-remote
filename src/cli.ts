@@ -5,7 +5,7 @@ import pc from "picocolors";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { execSync, spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { CONFIG_DIR } from "./utils.js";
 import type { Config } from "./types.js";
@@ -594,10 +594,10 @@ function isLocalDev(): boolean {
 }
 
 /**
- * Non-blocking auto-update: checks npm registry, installs if newer version exists.
- * Runs entirely in the background — never blocks CLI startup.
+ * Non-blocking update check: queries npm registry, writes latest version to cache.
+ * The statusline reads the cache and shows a notice if newer version exists.
  */
-function autoUpdate() {
+function checkForUpdates() {
   const cache = readUpdateCache();
   const now = Date.now();
 
@@ -616,20 +616,60 @@ function autoUpdate() {
       if (!latest) return;
 
       writeUpdateCache({ lastCheck: now, latestVersion: latest });
-
-      if (compareVersions(latest, PKG_VERSION) <= 0) return;
-
-      // Newer version available — install in background
-      const child = spawn("npm", ["install", "-g", `${PKG_NAME}@${latest}`], {
-        detached: true,
-        stdio: "ignore",
-        shell: true,
-      });
-      child.unref();
     })
     .catch(() => {
       // Network error, offline, etc. — silently ignore
     });
+}
+
+/** Self-update: install the latest version from npm */
+async function selfUpdate() {
+  p.intro(pc.bgCyan(pc.black(" claude-remote update ")));
+
+  const s = p.spinner();
+  s.start("Checking for updates...");
+
+  let latest: string;
+  try {
+    const res = await fetch(`https://registry.npmjs.org/${PKG_NAME}/latest`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    const data = await res.json() as { version?: string };
+    latest = data.version || "";
+    if (!latest) throw new Error("No version found");
+  } catch {
+    s.stop("Failed to check for updates");
+    p.log.error("Could not reach npm registry. Check your internet connection.");
+    process.exit(1);
+  }
+
+  if (compareVersions(latest, PKG_VERSION) <= 0) {
+    s.stop(`Already on latest version ${pc.green(PKG_VERSION)}`);
+    p.outro("");
+    return;
+  }
+
+  s.message(`Installing ${pc.green(latest)}...`);
+
+  try {
+    execSync(`npm install -g ${PKG_NAME}@${latest}`, {
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: 60000,
+    });
+    writeUpdateCache({ lastCheck: Date.now(), latestVersion: latest });
+    s.stop(`Updated ${pc.dim(PKG_VERSION)} → ${pc.green(latest)}`);
+    p.outro(pc.green("Restart your terminal to use the new version."));
+  } catch (err) {
+    s.stop("Update failed");
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("EACCES") || msg.includes("permission")) {
+      p.log.error(`Permission denied. Try: ${pc.bold(`sudo npm install -g ${PKG_NAME}@${latest}`)}`);
+    } else {
+      p.log.error(`Install failed: ${msg}`);
+      p.log.info(`You can update manually: ${pc.bold(`npm install -g ${PKG_NAME}@${latest}`)}`);
+    }
+    process.exit(1);
+  }
 }
 
 async function run() {
@@ -646,7 +686,7 @@ async function run() {
   process.env.DISCORD_CATEGORY_ID = config.categoryId;
 
   // Check for updates in background (non-blocking, skip if locally linked)
-  if (!isLocalDev()) autoUpdate();
+  if (!isLocalDev()) checkForUpdates();
 
   await import("./rc.js");
 }
@@ -662,6 +702,9 @@ switch (command) {
   case "uninstall":
     await uninstall();
     break;
+  case "update":
+    await selfUpdate();
+    break;
   case undefined:
   case "start":
     await run();
@@ -675,6 +718,7 @@ switch (command) {
   ${pc.dim("Commands:")}
     ${pc.cyan("claude-remote")}              Start Claude Code with remote control
     ${pc.cyan("claude-remote setup")}        Configure provider, install hook
+    ${pc.cyan("claude-remote update")}       Update to the latest version
     ${pc.cyan("claude-remote uninstall")}    Remove hook and config
     ${pc.cyan("claude-remote help")}         Show this help
 `);
