@@ -1,9 +1,9 @@
 import type { MessageHandler, SessionContext, HandlerResult } from "../handler.js";
 import type { ProcessedMessage } from "../types.js";
 import type { ProviderThread } from "../provider.js";
-import { hasThreads } from "../provider.js";
+import { hasThreads, editOrSend } from "../provider.js";
 import { toolState, INLINE_RESULT_THRESHOLD } from "./tool-state.js";
-import { renderToolResultThreadMessages, COLOR } from "../discord-renderer.js";
+import { renderToolResultThreadMessages, resultColor } from "../discord-renderer.js";
 import { truncate } from "../utils.js";
 
 /** Send result content to a thread */
@@ -58,16 +58,12 @@ export class ToolResultHandler implements MessageHandler {
     const provider = ctx.provider;
     const icon = isError ? "❌" : "✅";
     const label = `**${entry.toolName}** — \`${truncate(entry.content, 80)}\``;
+    const color = resultColor(isError);
 
-    // Passive group results → send to group thread, don't close group
-    // Group is closed by idle callback, DefaultHandler, or non-passive tool-use
+    // Passive group results → buffer for display at close
     const group = toolState.activePassiveGroup;
-    if (group && entry.thread &&
-        hasThreads(provider) &&
-        group.thread.id === entry.thread.id) {
-      try {
-        await sendResultToThread(ctx, entry.thread, pm.content, isError);
-      } catch { /* best effort */ }
+    if (group && group.toolUseIds.has(pm.toolUseId)) {
+      group.results.push({ content: pm.content, isError });
       toolState.toolUseThreads.delete(pm.toolUseId);
       return "consumed";
     }
@@ -76,7 +72,7 @@ export class ToolResultHandler implements MessageHandler {
     const isEmpty = !resultText || resultText === "undefined";
     const isShort = !isEmpty && resultText.length <= INLINE_RESULT_THRESHOLD;
 
-    // Already escalated to thread → put result there, no inline
+    // Already escalated to thread (slow >5s) → inline embed was already deleted
     if (entry.thread && hasThreads(provider)) {
       await sendResultToThread(ctx, entry.thread, resultText, isError);
       toolState.toolUseThreads.delete(pm.toolUseId);
@@ -91,19 +87,21 @@ export class ToolResultHandler implements MessageHandler {
       return "consumed";
     }
 
-    // No thread yet — result came fast
+    // Fast result — no thread yet
     if (isEmpty || isShort) {
-      // Short/empty → inline embed with tool name
       const desc = isEmpty
         ? `${icon} ${label} *(no output)*`
         : `${icon} ${label}\n\`\`\`\n${resultText}\n\`\`\``;
-      await provider.send({ embed: { description: desc, color: isError ? 0xed4245 : COLOR.TOOL_OK } });
+      await editOrSend(provider, entry.inlineMessage, { embed: { description: desc, color } });
       toolState.toolUseThreads.delete(pm.toolUseId);
     } else if (hasThreads(provider)) {
-      // Long result, no thread yet → create thread (no inline)
-      const thread = await provider.createThread(
-        truncate(`⏳ ${entry.toolName} — ${entry.content}`, 100)
-      );
+      // Long result → delete inline embed, escalate to thread
+      const [, thread] = await Promise.all([
+        entry.inlineMessage
+          ? provider.delete(entry.inlineMessage).catch(() => {})
+          : Promise.resolve(),
+        provider.createThread(truncate(`${entry.toolName} — ${entry.content} ${icon}`, 100)),
+      ]);
       if (entry.cachedInput) {
         for (const msg of entry.cachedInput) {
           await provider.sendToThread(thread, msg);
@@ -111,14 +109,12 @@ export class ToolResultHandler implements MessageHandler {
       }
 
       await sendResultToThread(ctx, thread, resultText, isError);
-      await finalizeThread(ctx, thread, entry.toolName, entry.content, icon);
+      try { await provider.archiveThread(thread); } catch { /* best effort */ }
       toolState.toolUseThreads.delete(pm.toolUseId);
     } else {
-      // No thread support — inline embed with tool name + result
-      await provider.send({ embed: { description: `${icon} ${label}`, color: isError ? 0xed4245 : COLOR.TOOL_OK } });
-      for (const msg of renderToolResultThreadMessages(resultText, isError)) {
-        await provider.send({ text: msg.content });
-      }
+      // No thread support — edit inline embed
+      const desc = `${icon} ${label}\n\`\`\`\n${truncate(resultText, 3900)}\n\`\`\``;
+      await editOrSend(provider, entry.inlineMessage, { embed: { description: desc, color } });
       toolState.toolUseThreads.delete(pm.toolUseId);
     }
 

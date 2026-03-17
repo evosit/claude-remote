@@ -1,11 +1,10 @@
 import type { MessageHandler, SessionContext, HandlerResult } from "../handler.js";
 import type { ProcessedMessage } from "../types.js";
-import type { ProviderThread } from "../provider.js";
-import { hasThreads } from "../provider.js";
-import { toolState, PASSIVE_TOOLS } from "./tool-state.js";
-import { formatToolInput } from "../format-tool.js";
+import type { ProviderMessage } from "../provider.js";
+import { hasThreads, editOrSend } from "../provider.js";
+import { toolState, PASSIVE_TOOLS, INLINE_RESULT_THRESHOLD } from "./tool-state.js";
+import { renderToolResultThreadMessages, resultColor, COLOR } from "../discord-renderer.js";
 import { truncate } from "../utils.js";
-import { COLOR } from "../discord-renderer.js";
 
 function isPassiveToolUse(pm: ProcessedMessage): boolean {
   return pm.type === "tool-use" && !!pm.toolUseId && PASSIVE_TOOLS.has(pm.toolName || "");
@@ -20,30 +19,50 @@ function passiveGroupSummary(counts: Map<string, number>): string {
   return parts.join(", ");
 }
 
-async function sendToolInput(ctx: SessionContext, thread: ProviderThread, pm: ProcessedMessage) {
-  const provider = ctx.provider;
-  if (!hasThreads(provider)) return;
-  for (const msg of formatToolInput(pm, COLOR.TOOL)) {
-    await provider.sendToThread(thread, msg);
-  }
-}
-
 export async function closePassiveGroup(ctx: SessionContext) {
   const g = toolState.activePassiveGroup;
   if (!g) return;
   toolState.activePassiveGroup = null;
 
   const provider = ctx.provider;
-  if (!hasThreads(provider)) return;
+  const summary = passiveGroupSummary(g.counts);
+  const hasError = g.results.some((r) => r.isError);
+  const icon = hasError ? "❌" : "✅";
 
-  try {
-    const summary = passiveGroupSummary(g.counts);
-    await provider.renameThread(g.thread, truncate(`${summary} ✅`, 100));
-  } catch { /* rate limited */ }
+  // Combine non-empty results (trim once per entry)
+  const trimmedResults = g.results
+    .map((r) => r.content.trim())
+    .filter((t) => t && t !== "undefined");
+  const combinedResult = trimmedResults.join("\n");
 
-  const hasUnresolved = g.toolUseIds.some((id) => !ctx.resolvedToolUseIds.has(id));
-  if (!hasUnresolved) {
-    try { await provider.archiveThread(g.thread); } catch { /* best effort */ }
+  const isShort = combinedResult.length <= INLINE_RESULT_THRESHOLD;
+
+  if (isShort) {
+    const desc = combinedResult
+      ? `${icon} ${summary}\n\`\`\`\n${combinedResult}\n\`\`\``
+      : `${icon} ${summary}`;
+    await editOrSend(provider, g.inlineMessage, {
+      embed: { description: desc, color: resultColor(hasError) },
+    });
+  } else if (hasThreads(provider)) {
+    // Long → delete inline embed, create thread with full results
+    if (g.inlineMessage) {
+      try { await provider.delete(g.inlineMessage); } catch { /* already gone */ }
+    }
+
+    const thread = await provider.createThread(truncate(`${summary} ${icon}`, 100));
+    for (const r of g.results) {
+      for (const msg of renderToolResultThreadMessages(r.content, r.isError)) {
+        await provider.sendToThread(thread, { text: msg.content });
+      }
+    }
+    try { await provider.archiveThread(thread); } catch { /* best effort */ }
+  } else {
+    // No thread support — truncate into embed
+    const desc = `${icon} ${summary}\n\`\`\`\n${truncate(combinedResult, 3900)}\n\`\`\``;
+    await editOrSend(provider, g.inlineMessage, {
+      embed: { description: desc, color: resultColor(hasError) },
+    });
   }
 }
 
@@ -57,51 +76,50 @@ export class PassiveToolHandler implements MessageHandler {
       return "pass";
     }
 
-    const provider = ctx.provider;
-    if (!hasThreads(provider)) return "pass";
-
     const name = pm.toolName || "Unknown";
 
-    // Merge into existing group (no rename — Discord limits to 2 renames/10min per thread)
+    // Merge into existing group — no API call needed
     if (toolState.activePassiveGroup) {
       const g = toolState.activePassiveGroup;
       g.counts.set(name, (g.counts.get(name) || 0) + 1);
-      g.toolUseIds.push(pm.toolUseId!);
+      g.toolUseIds.add(pm.toolUseId!);
 
-      const summary = passiveGroupSummary(g.counts);
       toolState.toolUseThreads.set(pm.toolUseId!, {
-        thread: g.thread,
+        thread: null,
         toolName: name,
-        content: summary,
+        content: "",
       });
 
-      await sendToolInput(ctx, g.thread, pm);
       return "consumed";
     }
 
-    // Start new group
+    // Start new group — send inline embed
     const counts = new Map<string, number>([[name, 1]]);
-    const summary = passiveGroupSummary(counts);
 
+    let inlineMessage: ProviderMessage | null = null;
     try {
-      const thread = await provider.createThread(truncate(`⏳ ${summary}`, 100));
-
-      toolState.toolUseThreads.set(pm.toolUseId!, {
-        thread,
-        toolName: name,
-        content: summary,
+      inlineMessage = await ctx.provider.send({
+        embed: {
+          description: `⏳ ${passiveGroupSummary(counts)}`,
+          color: COLOR.TOOL,
+        },
       });
-
-      toolState.activePassiveGroup = {
-        thread,
-        counts,
-        toolUseIds: [pm.toolUseId!],
-      };
-
-      await sendToolInput(ctx, thread, pm);
     } catch (err) {
-      console.error("[passive-tools] Failed to create thread:", err);
+      console.error("[passive-tools] Failed to send inline embed:", err);
     }
+
+    toolState.toolUseThreads.set(pm.toolUseId!, {
+      thread: null,
+      toolName: name,
+      content: "",
+    });
+
+    toolState.activePassiveGroup = {
+      inlineMessage,
+      counts,
+      toolUseIds: new Set([pm.toolUseId!]),
+      results: [],
+    };
 
     return "consumed";
   }

@@ -15,6 +15,8 @@ export interface ToolEntry {
   toolName: string;
   content: string;
   cachedInput?: OutgoingMessage[];
+  /** Inline embed shown in channel — deleted when escalated to thread */
+  inlineMessage?: ProviderMessage | null;
 }
 
 // ── Shared mutable state for tool-related handlers ──
@@ -25,9 +27,11 @@ export const toolState = {
 
   /** Active passive tool group (Read/Grep/Glob) */
   activePassiveGroup: null as {
-    thread: ProviderThread;
+    inlineMessage: ProviderMessage | null;
     counts: Map<string, number>;
-    toolUseIds: string[];
+    toolUseIds: Set<string>;
+    /** Buffered results for inline display */
+    results: Array<{ content: string; isError: boolean }>;
   } | null,
 
   /** Task tool tracking */
