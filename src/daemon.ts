@@ -52,6 +52,21 @@ function sendToParent(msg: DaemonToParent) {
   }
 }
 
+// ── Key sequence helper ──
+// Claude Code uses Ink select menus (arrow-key navigation) for prompts.
+// We must send keys with delays so each keypress is processed before the next.
+
+const KEY_DELAY = 150;
+const ARROW_DOWN = "\x1b[B";
+const ENTER = "\r";
+const SPACE = " ";
+
+function sendKeySequence(keys: string[]) {
+  keys.forEach((key, i) => {
+    setTimeout(() => sendToParent({ type: "pty-write", text: key, raw: true }), i * KEY_DELAY);
+  });
+}
+
 let reuseChannelId: string | undefined;
 let initialPermissionMode = "default";
 
@@ -275,7 +290,8 @@ async function start() {
       if (id.startsWith(ID_PREFIX.ALLOW)) {
         const toolUseId = id.slice(ID_PREFIX.ALLOW.length);
         ctx!.resolvedToolUseIds.add(toolUseId);
-        sendToParent({ type: "pty-write", text: "y", raw: true });
+        // Allow is pre-highlighted in the select menu — just press Enter
+        sendKeySequence([ENTER]);
         provider!.respond(interaction, { text: "✅ Allowed" });
         return;
       }
@@ -283,7 +299,8 @@ async function start() {
       if (id.startsWith(ID_PREFIX.DENY)) {
         const toolUseId = id.slice(ID_PREFIX.DENY.length);
         ctx!.resolvedToolUseIds.add(toolUseId);
-        sendToParent({ type: "pty-write", text: "n", raw: true });
+        // Navigate down to Deny option, then press Enter
+        sendKeySequence([ARROW_DOWN, ENTER]);
         provider!.respond(interaction, { text: "❌ Denied" });
         return;
       }
@@ -324,13 +341,31 @@ async function start() {
       }
 
       if (interaction.type === "button" && id.startsWith(ID_PREFIX.ASK) && interaction.values?.[0]) {
-        sendToParent({ type: "pty-write", text: interaction.values[0] });
+        // Button ID format: ask:{toolUseId}:{header}:{index}:{label}
+        const parts = id.split(":");
+        const optionIndex = parseInt(parts[3], 10);
+        const keys: string[] = [];
+        for (let i = 0; i < optionIndex; i++) keys.push(ARROW_DOWN);
+        keys.push(ENTER);
+        sendKeySequence(keys);
         provider!.respond(interaction, { text: `Selected: **${interaction.values[0]}**` });
         return;
       }
 
-      if (interaction.type === "select" && interaction.text) {
-        sendToParent({ type: "pty-write", text: interaction.text });
+      if (interaction.type === "select" && interaction.values?.length) {
+        // Select values are "{index}:{label}" — parse indices, navigate + toggle + submit
+        const indices = interaction.values
+          .map((v) => parseInt(v.split(":")[0], 10))
+          .sort((a, b) => a - b);
+        const keys: string[] = [];
+        let pos = 0;
+        for (const idx of indices) {
+          for (let i = pos; i < idx; i++) keys.push(ARROW_DOWN);
+          keys.push(SPACE);
+          pos = idx;
+        }
+        keys.push(ENTER);
+        sendKeySequence(keys);
         provider!.respond(interaction, { text: `Selected: **${interaction.text}**` });
         return;
       }

@@ -117,9 +117,9 @@ export function renderMessage(msg: ProcessedMessage): OutgoingMessage[] {
           base.selectMenu = {
             id: `${ID_PREFIX.ASK}${msg.toolUseId}:${q.header}`,
             placeholder: "Select options...",
-            options: q.options.map((o) => ({
+            options: q.options.map((o, idx) => ({
               label: o.label,
-              value: o.label,
+              value: `${idx}:${o.label}`,
               description: o.description || undefined,
             })),
             minValues: 1,
@@ -127,8 +127,8 @@ export function renderMessage(msg: ProcessedMessage): OutgoingMessage[] {
           };
         } else {
           base.actions = [
-            ...q.options.map((o) => ({
-              id: `${ID_PREFIX.ASK}${msg.toolUseId}:${q.header}:${o.label}`,
+            ...q.options.map((o, idx) => ({
+              id: `${ID_PREFIX.ASK}${msg.toolUseId}:${q.header}:${idx}:${o.label}`,
               label: o.label,
               style: "primary" as const,
             })),

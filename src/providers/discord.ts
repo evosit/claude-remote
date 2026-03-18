@@ -186,7 +186,8 @@ export class DiscordProvider implements OutputProvider, ThreadCapable, InputCapa
       }
       if (id.startsWith(ID_PREFIX.ASK)) {
         const parts = id.split(":");
-        const selectedLabel = parts[3];
+        // Format: ask:{toolUseId}:{header}:{index}:{label}
+        const selectedLabel = parts.slice(4).join(":");
         this.interactionCb?.({ type: "button", customId: id, values: [selectedLabel], ref: interaction });
         return;
       }
@@ -214,8 +215,9 @@ export class DiscordProvider implements OutputProvider, ThreadCapable, InputCapa
 
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId.startsWith(ID_PREFIX.ASK)) {
-        const selected = interaction.values.join(", ");
-        this.interactionCb?.({ type: "select", customId: interaction.customId, values: interaction.values, text: selected, ref: interaction });
+        // Values are "{index}:{label}" — strip index prefix for display text
+        const labels = interaction.values.map((v) => v.replace(/^\d+:/, ""));
+        this.interactionCb?.({ type: "select", customId: interaction.customId, values: interaction.values, text: labels.join(", "), ref: interaction });
         return;
       }
     }
