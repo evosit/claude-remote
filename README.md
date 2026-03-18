@@ -6,6 +6,8 @@ I built this because I kept kicking off long Claude tasks and then leaving my de
 
 ## What it looks like
 
+![Preview](assets/preview.png)
+
 When enabled, each Claude session gets its own Discord channel. Messages, tool calls, diffs, and errors stream in as rich embeds. You interact through buttons and typing:
 
 - Tool calls show up with Allow / Deny buttons
