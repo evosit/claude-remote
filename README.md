@@ -45,10 +45,11 @@ claude-remote -p "fix the login bug"
 Toggle the Discord sync inside a session:
 
 ```
-/discord              # toggle on/off
-/discord on           # enable
-/discord off          # disable
-/discord my-session   # enable with a custom channel name
+/remote               # toggle on/off
+/remote on            # enable
+/remote off           # disable
+/remote on my-session # enable with a custom channel name
+/remote status        # print current state
 ```
 
 ### Discord commands
