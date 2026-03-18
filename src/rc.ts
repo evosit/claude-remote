@@ -93,6 +93,9 @@ function startPipeServer() {
           daemonWasEnabled = false;
           stopDaemon();
           socket.write(JSON.stringify({ status: "ok", active: false }));
+        } else if (msg.type === "state-signal") {
+          if (daemon) daemon.send({ type: "state-signal", event: msg.event, trigger: msg.trigger });
+          socket.write(JSON.stringify({ status: "ok" }));
         } else if (msg.type === "status") {
           socket.write(JSON.stringify({ status: "ok", active: daemon !== null }));
         }

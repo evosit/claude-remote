@@ -75,18 +75,23 @@ export class ActivityManager {
     }
   }
 
+  /** Transition to idle and schedule dequeue. No-op if already idle. */
+  transitionToIdle(dequeueDelay = 500) {
+    if (!this.busy) return;
+    this.busy = false;
+    this.update("idle");
+    setTimeout(() => this.tryDequeue(), dequeueDelay);
+  }
+
   resetIdleTimer() {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (!this.busy) return;
     this.idleTimer = setTimeout(() => {
       if (!this.busy) return;
       console.log("[activity] Idle timeout — no JSONL activity for 2m, assuming idle");
-      this.busy = false;
-      this.update("idle");
-      this.tryDequeue();
+      this.transitionToIdle(0);
     }, IDLE_TIMEOUT);
   }
-
 
   enqueue(text: string): QueuedMessage {
     const msg: QueuedMessage = { id: this.nextId++, text, addedAt: Date.now() };

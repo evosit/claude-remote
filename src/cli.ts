@@ -67,6 +67,26 @@ function getStatuslineCommand(): string {
 
 // ── Skill & statusline management ──
 
+const HOOK_EVENT_TYPES = ["UserPromptSubmit", "SessionStart", "Stop", "PostCompact"];
+const HOOK_SCRIPT_NAMES = ["discord-hook", "session-hook", "state-hook"];
+
+function isOurHook(h: Record<string, string>): boolean {
+  return HOOK_SCRIPT_NAMES.some((name) => h.command?.includes(name));
+}
+
+function cleanRemoteHooks(hooks: Record<string, unknown[]>) {
+  for (const eventType of HOOK_EVENT_TYPES) {
+    if (Array.isArray(hooks[eventType])) {
+      hooks[eventType] = hooks[eventType].filter((entry: unknown) => {
+        const e = entry as Record<string, unknown>;
+        const innerHooks = e.hooks as Array<Record<string, string>> | undefined;
+        return !innerHooks?.some(isOurHook);
+      });
+      if (hooks[eventType].length === 0) delete hooks[eventType];
+    }
+  }
+}
+
 function getHookCommand(scriptName: string): string {
   const scriptPath = path.resolve(import.meta.dirname, `${scriptName}.js`);
   return `node "${scriptPath}"`;
@@ -118,22 +138,27 @@ Print the output to the user. Do not add any extra commentary.
   const hooks = (settings.hooks || {}) as Record<string, unknown[]>;
 
   // Clean old claude-remote hooks from all event types
-  for (const eventType of ["UserPromptSubmit", "SessionStart"]) {
-    if (Array.isArray(hooks[eventType])) {
-      hooks[eventType] = hooks[eventType].filter((entry: unknown) => {
-        const e = entry as Record<string, unknown>;
-        const innerHooks = e.hooks as Array<Record<string, string>> | undefined;
-        return !innerHooks?.some((h) => h.command?.includes("discord-hook") || h.command?.includes("session-hook"));
-      });
-      if (hooks[eventType].length === 0) delete hooks[eventType];
-    }
-  }
+  cleanRemoteHooks(hooks);
 
   // Add SessionStart hook — registers session info with rc.ts
   if (!hooks.SessionStart) hooks.SessionStart = [];
   hooks.SessionStart.push({
     matcher: "",
     hooks: [{ type: "command", command: getHookCommand("session-hook"), timeout: 5000 }],
+  });
+
+  // Add Stop hook — authoritative idle signal when Claude finishes responding
+  if (!hooks.Stop) hooks.Stop = [];
+  hooks.Stop.push({
+    matcher: "",
+    hooks: [{ type: "command", command: getHookCommand("state-hook"), timeout: 5000 }],
+  });
+
+  // Add PostCompact hook — idle signal after manual /compact
+  if (!hooks.PostCompact) hooks.PostCompact = [];
+  hooks.PostCompact.push({
+    matcher: "",
+    hooks: [{ type: "command", command: getHookCommand("state-hook"), timeout: 5000 }],
   });
 
   settings.hooks = hooks;
@@ -168,16 +193,7 @@ function uninstallHooksAndStatusline() {
   // Remove claude-remote hooks
   const hooks = settings.hooks as Record<string, unknown[]> | undefined;
   if (hooks) {
-    for (const eventType of ["UserPromptSubmit", "SessionStart"]) {
-      if (Array.isArray(hooks[eventType])) {
-        hooks[eventType] = hooks[eventType].filter((entry: unknown) => {
-          const e = entry as Record<string, unknown>;
-          const innerHooks = e.hooks as Array<Record<string, string>> | undefined;
-          return !innerHooks?.some((h) => h.command?.includes("discord-hook") || h.command?.includes("session-hook"));
-        });
-        if (hooks[eventType].length === 0) delete hooks[eventType];
-      }
-    }
+    cleanRemoteHooks(hooks);
     if (Object.keys(hooks).length === 0) delete settings.hooks;
   }
 
@@ -709,6 +725,9 @@ async function run() {
   process.env.DISCORD_BOT_TOKEN = config.discordBotToken;
   process.env.DISCORD_GUILD_ID = config.guildId;
   process.env.DISCORD_CATEGORY_ID = config.categoryId;
+
+  // Ensure hooks & skill are up to date (idempotent, handles post-update registration)
+  installHooksAndStatusline();
 
   // Check for updates in background (non-blocking, skip if locally linked)
   if (!isLocalDev()) checkForUpdates();

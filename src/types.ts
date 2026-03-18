@@ -94,7 +94,7 @@ export interface DaemonReadyMessage {
 }
 
 export type DaemonToParent = PtyWriteMessage | DaemonReadyMessage;
-export type ParentToDaemon = SessionInfoMessage;
+export type ParentToDaemon = SessionInfoMessage | PipeStateSignalMessage;
 
 // ── Named pipe messages (hook → rc) ──
 
@@ -119,7 +119,13 @@ export interface PipeSessionRegisterMessage {
   cwd?: string;
 }
 
-export type PipeMessage = PipeEnableMessage | PipeDisableMessage | PipeStatusMessage | PipeSessionRegisterMessage;
+export interface PipeStateSignalMessage {
+  type: "state-signal";
+  event: "stop" | "post-compact";
+  trigger?: "manual" | "auto";
+}
+
+export type PipeMessage = PipeEnableMessage | PipeDisableMessage | PipeStatusMessage | PipeSessionRegisterMessage | PipeStateSignalMessage;
 
 // ── Processed message for Discord rendering ──
 

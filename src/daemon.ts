@@ -7,7 +7,7 @@ import os from "node:os";
 import { parseJSONLString, processAssistantBlocks, processUserBlocks, processNonConversation, walkCurrentBranch, getToolInputPreview } from "./jsonl-parser.js";
 import { renderBatch, COLOR } from "./discord-renderer.js";
 import { resolveJSONLPath, ID_PREFIX, CONFIG_DIR, capSet, truncate, extractToolResultText, extractToolResultImages, mimeToExt, isLocalCommand } from "./utils.js";
-import type { JSONLMessage, ProcessedMessage, ContentBlock, ContentBlockToolUse, ContentBlockText, ContentBlockToolResult, DaemonToParent, SessionInfoMessage } from "./types.js";
+import type { JSONLMessage, ProcessedMessage, ContentBlock, ContentBlockToolUse, ContentBlockText, ContentBlockToolResult, DaemonToParent, ParentToDaemon } from "./types.js";
 import { DiscordProvider } from "./providers/discord.js";
 import { createPipeline } from "./create-pipeline.js";
 import type { SessionContext } from "./handler.js";
@@ -55,7 +55,7 @@ function sendToParent(msg: DaemonToParent) {
 let reuseChannelId: string | undefined;
 let initialPermissionMode = "default";
 
-process.on("message", (msg: SessionInfoMessage) => {
+process.on("message", (msg: ParentToDaemon) => {
   if (msg.type === "session-info") {
     sessionId = msg.sessionId;
     projectDir = msg.projectDir;
@@ -66,6 +66,13 @@ process.on("message", (msg: SessionInfoMessage) => {
     console.log(`[daemon] Session: ${sessionId}`);
     console.log(`[daemon] JSONL: ${jsonlPath}`);
     start();
+  } else if (msg.type === "state-signal") {
+    if (!activity) return;
+    // Stop = Claude finished responding; PostCompact manual = /compact done
+    // PostCompact auto → do nothing (Claude continues after auto-compact)
+    if (msg.event === "stop" || (msg.event === "post-compact" && msg.trigger === "manual")) {
+      activity.transitionToIdle();
+    }
   }
 });
 
@@ -564,11 +571,9 @@ async function handleFileChange(filePath: string) {
         if (isInterrupt && activity) {
           if (batchTimer) { clearTimeout(batchTimer); batchTimer = null; }
           pendingBatch = [];
-          activity.busy = false;
           activity.stopOverrideUntil = Date.now() + 3000;
-          activity.update("idle");
+          activity.transitionToIdle(3500);
           await ctx.provider.send({ text: "⏹️ **Interrupted** from CLI" });
-          setTimeout(() => activity!.tryDequeue(), 3500);
           knownUuids.add(msg.uuid);
           lastMessageUuid = msg.uuid;
           continue;
@@ -585,9 +590,7 @@ async function handleFileChange(filePath: string) {
           await ctx.provider.send({
             embed: { description: "⚠️ **API error** — request failed (Claude returned an error)", color: COLOR.ERROR_RED },
           });
-          activity.busy = false;
-          activity.update("idle");
-          setTimeout(() => activity!.tryDequeue(), 500);
+          activity.transitionToIdle();
         } else if (msg.type === "assistant" && msg.message && Array.isArray(msg.message.content)) {
           const blocks = msg.message.content as ContentBlock[];
           const hasToolUse = blocks.some((b) => b.type === "tool_use");
@@ -595,14 +598,12 @@ async function handleFileChange(filePath: string) {
             activity.update("working");
           } else if (blocks.some((b) => b.type === "text")) {
             // Text-only assistant message = turn complete
-            activity.busy = false;
-            activity.update("idle"); // onIdle callback closes passive group
             if (msg.message!.stop_reason === "max_tokens") {
               await ctx.provider.send({
                 embed: { description: "⚠️ **Response hit token limit** — output was truncated", color: COLOR.ERROR_RED },
               });
             }
-            setTimeout(() => activity!.tryDequeue(), 500);
+            activity.transitionToIdle();
           }
         } else if (msg.type === "user" && msg.message && !activity.busy) {
           const content = msg.message.content;
@@ -627,9 +628,7 @@ async function handleFileChange(filePath: string) {
             embed: { description: `⚠️ **API error**: ${detail}`, color: COLOR.ERROR_RED },
           });
           if (activity) {
-            activity.busy = false;
-            activity.update("idle");
-            setTimeout(() => activity!.tryDequeue(), 500);
+            activity.transitionToIdle();
           }
         } else if (msg.subtype === "compact_boundary") {
           await ctx.provider.send({ text: "🗜️ **Context compacted**" });
@@ -687,9 +686,7 @@ async function handleFileChange(filePath: string) {
         }
         // Always transition to idle on any result (success or error)
         if (activity) {
-          activity.busy = false;
-          activity.update("idle");
-          setTimeout(() => activity!.tryDequeue(), 500);
+          activity.transitionToIdle();
         }
         continue;
       }
