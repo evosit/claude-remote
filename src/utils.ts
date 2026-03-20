@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { getConfigDir } from "./platform.js";
 
 // ── Shared paths ──
 
-export const CONFIG_DIR = path.join(os.homedir(), ".claude-remote");
+const CONFIG_DIR = getConfigDir();
 export const STATUS_FLAG = path.join(CONFIG_DIR, "active");
 export const PIPE_REGISTRY = path.join(CONFIG_DIR, "pipes");
 

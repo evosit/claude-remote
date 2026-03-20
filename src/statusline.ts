@@ -10,7 +10,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { STATUS_FLAG, CONFIG_DIR } from "./utils.js";
+import { getConfigDir } from "./platform.js";
+import { STATUS_FLAG } from "./utils.js";
+
+const CONFIG_DIR = getConfigDir();
 
 interface SessionData {
   model?: { display_name?: string };
