@@ -4,15 +4,15 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { fork, type ChildProcess } from "node:child_process";
+import { which } from "which";
 import { STATUS_FLAG, PIPE_REGISTRY, safeUnlink } from "./utils.js";
+import * as platform from "./platform.js";
 import type { DaemonToParent, PipeMessage } from "./types.js";
 
 // ── Constants ──
 
-const PIPE_NAME = `\\\\.\\pipe\\claude-remote-${process.pid}`;
-
-// Use claude.exe explicitly to bypass any .cmd shim aliases we installed
-const CLAUDE_BIN = "claude.exe";
+const PIPE_PATH = platform.getPipePath();
+const CLAUDE_BIN = platform.getClaudeBinary();
 
 // ── State ──
 
@@ -40,7 +40,27 @@ function restoreTerminal() {
 // ── Spawn Claude in PTY ──
 
 // Set env var so the SessionStart hook only connects to THIS rc instance
-process.env.CLAUDE_REMOTE_PIPE = PIPE_NAME;
+process.env.CLAUDE_REMOTE_PIPE = PIPE_PATH;
+
+// Verify Claude binary exists in PATH before spawning
+function verifyClaudeInPath(): string | null {
+  try {
+    return which.sync(CLAUDE_BIN);
+  } catch {
+    return null;
+  }
+}
+
+const claudePath = verifyClaudeInPath();
+if (!claudePath) {
+  console.error(`Claude binary '${CLAUDE_BIN}' not found in PATH`);
+  if (platform.getPlatform() !== 'win32') {
+    console.error('Install Claude Code: curl -fsSL https://claude.ai/install.sh | bash');
+  } else {
+    console.error('Install Claude Code from https://claude.ai/install');
+  }
+  process.exit(1);
+}
 
 const proc = pty.spawn(CLAUDE_BIN, process.argv.slice(2), {
   name: "xterm-color",
@@ -120,7 +140,12 @@ function startPipeServer() {
 
   pipeServer.on("error", () => {});
 
-  pipeServer.listen(PIPE_NAME, () => {
+  // Clean up stale socket on non-Windows before listening
+  if (platform.shouldCleanupSocket()) {
+    try { fs.unlinkSync(PIPE_PATH); } catch {}
+  }
+
+  pipeServer.listen(PIPE_PATH, () => {
     registerPipe();
   });
 }
@@ -130,7 +155,7 @@ function registerPipe() {
     fs.mkdirSync(PIPE_REGISTRY, { recursive: true });
     fs.writeFileSync(path.join(PIPE_REGISTRY, `${process.pid}.json`), JSON.stringify({
       pid: process.pid,
-      pipe: PIPE_NAME,
+      pipe: PIPE_PATH,
       cwd: projectDir,
       startedAt: new Date().toISOString(),
     }));
@@ -249,6 +274,13 @@ function shutdown() {
   // Fallback exit in case the PTY doesn't fire onExit.
   setTimeout(() => process.exit(0), 500);
 }
+
+// Cleanup socket on exit (non-Windows)
+process.on("exit", () => {
+  if (platform.shouldCleanupSocket()) {
+    try { fs.unlinkSync(PIPE_PATH); } catch {}
+  }
+});
 
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
