@@ -6,8 +6,14 @@ import path from "node:path";
 import os from "node:os";
 import { parseJSONLString, processAssistantBlocks, processUserBlocks, processNonConversation, walkCurrentBranch, getToolInputPreview } from "./jsonl-parser.js";
 import { renderBatch, COLOR } from "./discord-renderer.js";
-import { resolveJSONLPath, ID_PREFIX, CONFIG_DIR, capSet, truncate, extractToolResultText, extractToolResultImages, mimeToExt, isLocalCommand } from "./utils.js";
+import { resolveJSONLPath, ID_PREFIX, capSet, truncate, extractToolResultText, extractToolResultImages, mimeToExt, isLocalCommand } from "./utils.js";
+import { getConfigDir, getPlatform } from "./platform.js";
 import type { JSONLMessage, ProcessedMessage, ContentBlock, ContentBlockToolUse, ContentBlockText, ContentBlockToolResult, DaemonToParent, ParentToDaemon } from "./types.js";
+
+// Ignore SIGPIPE on non-Windows to avoid broken pipe crashes
+if (getPlatform() !== 'win32') {
+  process.on('SIGPIPE', () => {});
+}
 import { DiscordProvider } from "./providers/discord.js";
 import { createPipeline } from "./create-pipeline.js";
 import type { SessionContext } from "./handler.js";
@@ -903,7 +909,7 @@ function getProcessedMessages(msg: JSONLMessage): ProcessedMessage[] {
 
 // ── Session ↔ Channel mapping ──
 
-const SESSIONS_FILE = path.join(CONFIG_DIR, "sessions.json");
+const SESSIONS_FILE = path.join(getConfigDir(), "sessions.json");
 
 function loadSessionChannel(sid: string): string | null {
   try {
