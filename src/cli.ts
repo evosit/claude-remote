@@ -8,6 +8,7 @@ import os from "node:os";
 import { execSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { CONFIG_DIR } from "./utils.js";
+import * as platform from "./platform.js";
 import type { Config } from "./types.js";
 
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
@@ -217,47 +218,66 @@ function getAliasTargets(): AliasTarget[] {
   const targets: AliasTarget[] = [];
   const home = os.homedir();
 
-  // PowerShell 5
-  try {
-    const psProfile = execSync('powershell -NoProfile -Command "echo $PROFILE"', { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-    if (psProfile) {
-      targets.push({
-        shell: "powershell",
-        profilePath: psProfile,
-        aliasLine: `function claude { claude-remote @args } ${ALIAS_MARKER}`,
-        description: "PowerShell 5",
-      });
+  if (platform.getPlatform() === 'win32') {
+    // Windows: PowerShell 5, PowerShell 7, Git Bash, CMD
+    try {
+      const psProfile = execSync('powershell -NoProfile -Command "echo $PROFILE"', { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+      if (psProfile) {
+        targets.push({
+          shell: "powershell",
+          profilePath: psProfile,
+          aliasLine: `function claude { claude-remote @args } ${ALIAS_MARKER}`,
+          description: "PowerShell 5",
+        });
+      }
+    } catch { /* not available */ }
+
+    try {
+      const pwshProfile = execSync('pwsh -NoProfile -Command "echo $PROFILE"', { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
+      if (pwshProfile) {
+        targets.push({
+          shell: "pwsh",
+          profilePath: pwshProfile,
+          aliasLine: `function claude { claude-remote @args } ${ALIAS_MARKER}`,
+          description: "PowerShell 7",
+        });
+      }
+    } catch { /* not available */ }
+
+    // Git Bash
+    targets.push({
+      shell: "gitbash",
+      profilePath: path.join(home, ".bashrc"),
+      aliasLine: `claude() { claude-remote "$@"; } ${ALIAS_MARKER}`,
+      description: "Git Bash",
+    });
+
+    // CMD shim
+    targets.push({
+      shell: "cmd",
+      profilePath: path.join(home, ".local", "bin", "claude.cmd"),
+      aliasLine: "@echo off\nclaude-remote %*",
+      description: "CMD",
+    });
+  } else {
+    // Linux/macOS: bash, zsh, fish
+    const shells = [
+      { name: 'bash', path: path.join(home, '.bashrc'), line: `alias claude='claude-remote' ${ALIAS_MARKER}`, desc: 'Bash' },
+      { name: 'zsh', path: path.join(home, '.zshrc'), line: `alias claude='claude-remote' ${ALIAS_MARKER}`, desc: 'Zsh' },
+      { name: 'fish', path: path.join(home, '.config', 'fish', 'config.fish'), line: `function claude; claude-remote $argv; end ${ALIAS_MARKER}`, desc: 'Fish' },
+    ];
+
+    for (const shell of shells) {
+      if (fs.existsSync(shell.path)) {
+        targets.push({
+          shell: shell.name as 'bash' | 'zsh' | 'fish',
+          profilePath: shell.path,
+          aliasLine: shell.line,
+          description: shell.desc,
+        });
+      }
     }
-  } catch { /* not available */ }
-
-  // PowerShell 7 / pwsh
-  try {
-    const pwshProfile = execSync('pwsh -NoProfile -Command "echo $PROFILE"', { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }).trim();
-    if (pwshProfile) {
-      targets.push({
-        shell: "pwsh",
-        profilePath: pwshProfile,
-        aliasLine: `function claude { claude-remote @args } ${ALIAS_MARKER}`,
-        description: "PowerShell 7",
-      });
-    }
-  } catch { /* not available */ }
-
-  // Git Bash
-  targets.push({
-    shell: "gitbash",
-    profilePath: path.join(home, ".bashrc"),
-    aliasLine: `claude() { claude-remote "$@"; } ${ALIAS_MARKER}`,
-    description: "Git Bash",
-  });
-
-  // CMD shim
-  targets.push({
-    shell: "cmd",
-    profilePath: path.join(home, ".local", "bin", "claude.cmd"),
-    aliasLine: "@echo off\nclaude-remote %*",
-    description: "CMD",
-  });
+  }
 
   return targets;
 }
