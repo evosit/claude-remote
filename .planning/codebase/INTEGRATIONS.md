@@ -1,172 +1,327 @@
 # External Integrations
 
-## Discord API
+## Discord API (Primary)
 
-**Purpose**: Primary output provider - all Claude communication flows through Discord.
-
-**Implementation**: `src/providers/discord.ts` (`DiscordProvider`)
+**Implementation**: `src/providers/discord.ts` – `DiscordProvider`
 
 ### Features Used
 
-- **Bot Token Authentication**: Standard Discord bot login
+- **Authentication**: Bot token (stored in user config, passed via `DISCORD_BOT_TOKEN` env)
 - **Channel Management**:
-  - Creates session channels under a configured category
-  - Reuses existing channels with `/remote status` patterns
-  - Clears channel history on context reset
-- **Threading**: Long conversations organized into threads automatically
+  - Creates session channels under "Claude RC" category
+  - Reuses existing channels if `/remote status` detected
+  - Clears channel history on context reset (`/clear`)
+- **Threading**: Automatically spawns threads for long outputs; archives old threads (capped at 40)
 - **Interactions**:
-  - Buttons (Allow/Deny for tool calls, selections)
-  - Select menus (multi-choice, file selection)
-  - Modals (text input forms)
-- **Embeds**: Rich formatting for messages, diffs, tool results
-- **Attachments**: Image uploads, file attachments
-- **Slash Commands**: `/mode`, `/status`, `/stop`, `/clear`, `/compact`, `/queue`
-- **Message Components**: Pinned task boards with progress bars
+  - Buttons: Allow/Deny tool calls, task actions
+  - Select menus: Multi-choice selections, file pickers
+  - Modals: Text input forms (custom instructions)
+- **Embeds**: Rich formatting with fields, colors, footers, author, images
+- **Attachments**: Image uploads (from tool results), file downloads
+- **Slash Commands** (registered on startup):
+  - `/mode` – Change permission mode (default/bypassPermissions)
+  - `/status` – Show session info
+  - `/stop` – Send interrupt signal
+  - `/clear` – Clear context, new channel
+  - `/compact [instructions]` – Manual context compaction
+  - `/queue view|clear|remove|edit` – Manage message queue
 
-### Rate Limits
+### Rate Limits & Caching
 
-- **Outgoing**: 5 messages per 5-second sliding window
-- **Caches**: Up to 80 messages, 40 threads (LRU eviction)
+- **Outgoing rate limit**: 5 messages per 5-second sliding window
+- **Caches**:
+  - Messages: LRU up to 80 (edit/delete operations)
+  - Threads: LRU up to 40 (reuse and archival)
+- **Implementation**: `messageTimes` array tracks timestamps; throttle if limit reached.
 
-### API Endpoints Used
+### API Endpoints (REST)
 
-- `POST /guilds/{guild.id}/channels` - Create category/channel
-- `GET /guilds/{guild.id}/channels` - List channels (for reuse)
-- WebSocket gateway: MessageCreate, InteractionCreate events
-- REST interactions: Edit/delete messages, create threads, pin messages
+- `POST /guilds/{guild.id}/channels` – Create category/channel
+- `GET /guilds/{guild.id}/channels` – List channels (for channel reuse)
+- `PATCH /channels/{channel.id}` – Edit channel (archive threads, rename)
+- `POST /channels/{channel.id}/messages` – Send messages
+- `PATCH /messages/{message.id}` – Edit messages
+- `DELETE /messages/{message.id}` – Delete messages
+- `POST /channels/{channel.id}/pins/{message.id}` – Pin task boards
+- `POST /channels/{channel.id}/threads` – Create threads
+- `POST /threads/{thread.id}/messages` – Send to threads
+- `PATCH /threads/{thread.id}` – Archive threads
+- `PUT /applications/{app.id}/commands` – Register slash commands (global or guild)
 
-### Configuration
+### Gateway Events (WebSocket)
 
-- Bot token stored in `~/.claude/claude-remote/config.json`
-- Category created during setup: "Claude RC"
-- Requires Bot scopes: `bot`
-- Required permissions: `Send Messages`, `Manage Channels`, `Read Message History`, `Manage Threads`
-- Privileged intent: `MESSAGE CONTENT` (to read user messages)
+- `MessageCreate` – User messages from Discord
+- `InteractionCreate` – Button clicks, select menu picks, modal submissions
+- `Error` – Logged to console
+
+### Required Discord Bot Permissions
+
+- **Send Messages**
+- **Manage Channels** (create/archive threads, delete messages)
+- **Read Message History**
+- **Manage Threads**
+- **Use Slash Commands** (implicit)
+
+### Privileged Gateway Intent
+
+- **MESSAGE CONTENT** – Required to read usertyped messages (not just attachments)
 
 ---
 
-## Claude Code (via PTY & JSONL)
+## Claude Code (via PTY + JSONL)
 
-**Purpose**: Core integration - runs Claude Code and streams its output.
+**Implementation**: `src/rc.ts` (parent) + `src/daemon.ts` (daemon) + `src/jsonl-parser.ts`
 
-### Two-Process Architecture
+### Architecture
 
-**Parent Process** (`rc.ts`)
-- Spawns `claude.exe` in a PTY (node-pty)
-- Creates named pipe server for daemon IPC
-- Forwards daemon messages to PTY as keystrokes
-- Handles signal propagation (Ctrl+C)
-
-**Daemon Process** (`daemon.ts`)
-- Connects to Discord
-- Watches Claude's JSONL transcript file
-- Parses messages and routes to handler pipeline
-- Sends Discord interactions back to parent via IPC
+```
+┌─────────────────────────────────────────────────────────┐
+│ Terminal                                                 │
+│                                                          │
+│  $ claude-remote                                         │
+│  ┌────────────────────────────────────────────┐        │
+│  │ Parent (rc.js)                             │        │
+│  │  • PTY: claude.exe (node-pty)             │        │
+│  │  • Named pipe server: \\\\pipe\\...       │        │
+│  │  • Stdin/stdout forwarding                │        │
+│  └────────────────────────────────────────────┘        │
+│         │ PTY I/O                            │ IPC      │
+│         ▼                                     ▼        │
+│  ┌─────────────┐                     ┌─────────────┐  │
+│  │ claude.exe  │                     │ Daemon      │  │
+│  │ (Claude     │                     │  • Discord  │  │
+│  │  Code)      │                     │  • JSONL    │  │
+│  └─────────────┘                     │    watcher  │  │
+│                                       │  • Handlers │  │
+│                                       └─────────────┘  │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+```
 
 ### JSONL Transcript Format
 
-Claude Code writes structured JSONL with these message types:
+Claude Code writes one JSON object per line to `~/.claude/transcripts/<session-id>.jsonl`.
 
-- `user` - User prompts, including tool approvals
-- `assistant` - Claude responses, tool use blocks
-- `system` - System messages, errors
-- Non-conversation events: `tool-result`, `file-read`, `file-write`, `edit-result`, `task-start`, `task-end`, `thinking-start`, `thinking-end`
+**Message types**:
 
-Integration parses these via `src/jsonl-parser.ts` and routes through handler pipeline.
+| Type | Direction | Content |
+|------|-----------|---------|
+| `user` | User → Claude | Prompt text, attachments, selected options |
+| `assistant` | Claude → User | Response text, `content` array with `tool_use` blocks |
+| `system` | System | Errors, warnings, status messages |
+| `tool-result` | Tool → Claude | Output of tool execution (stdout, stderr, files) |
+| `file-edit` | File operation | `Edit`, `Write` tools rendered as diffs |
+| `task-start` / `task-end` | Task lifecycle | Progress tracking |
+| `thinking-start` / `thinking-end` | Thinking visibility | Show/hide reasoning |
 
 ### PTY Key Simulation
 
-To send messages to Claude from Discord:
-- Claude Code uses Ink select menus (arrow-key navigation)
-- Must send key sequences with delays (150ms per key)
-- Enter key (`\r`) to submit
-- Simulated via `process.send({ type: "pty-write", text, raw })`
+Claude Code uses Ink select menus (arrow-key navigation). To send approvals from Discord:
 
-### Slash Commands & Hooks
+1. Send ` ` (space) to focus the prompt
+2. Send `\x1b[B` (arrow down) to move to desired option
+3. Send `\r` (enter) to click
 
-- `/remote` skill installed to `~/.claude/skills/remote/`
-- Hook scripts:
-  - `session-hook.js` - Registers session with parent
-  - `state-hook.js` - Updates idle/busy state
-  - `discord-hook.js` - Not on specific events (legacy/migration)
-- Statusline: Custom command shows remote status in Claude's status bar
+Delays of ~150ms per key required for menu to process. Implemented in `daemon.ts` → IPC → `rc.ts` → PTY write.
+
+### IPC Protocol (Named Pipes)
+
+**Parent → Daemon** messages:
+
+```typescript
+{ type: "session-register", sessionId, transcriptPath, cwd? }
+{ type: "enable", channelName? }
+{ type: "disable" }
+{ type: "pty-write", text: string, raw: boolean }
+{ type: "state-signal", event: "stop" | "post-compact", trigger?: "manual" | "auto" }
+```
+
+**Daemon → Parent** messages:
+
+```typescript
+{ type: "session-info", sessionId, transcriptPath, cwd? }
+{ type: "signal", signal: "SIGINT" | ... }
+{ type: "interaction", interaction: ProviderInteraction }
+```
+
+**Transport**: Windows named pipe (`\\.\pipe\claude-remote-<pid>`). `rc.ts` creates server; daemon connects via `CLAUDE_REMOTE_PIPE` environment variable set by `session-hook.js`.
+
+### Hook Integration
+
+Claude Code settings (`~/.claude/settings.json`) installs:
+
+- **`SessionStart` hook**: `session-hook.js` reads `CLAUDE_REMOTE_PIPE` and sends `session-register` to parent.
+- **`Stop` hook**: `state-hook.js` sends `state-signal` (idle transition).
+- **`PostCompact` hook**: `state-hook.js` sends `state-signal` after manual `/compact`.
+
+### Claude Code Version Compatibility
+
+- Assumes JSONL format and hook behavior from Claude Code v1.0+.
+- No version detection; breaking changes in Claude Code could break this tool.
 
 ---
 
 ## NPM Registry
 
-**Purpose**: Auto-update checking and self-update.
+**Purpose**: Self-update mechanism.
 
-**Implementation**: `src/cli.ts` (`checkForUpdates()`, `selfUpdate()`)
+**Implementation**: `src/cli.ts` – `checkForUpdates()`, `selfUpdate()`
 
-- Polls `https://registry.npmjs.org/@hoangvu12/claude-remote/latest`
-- Non-blocking check every hour (cached)
-- `claude-remote update` performs in-place global npm install
+### Behavior
+
+- Non-blocking background check every 1 hour (cached in `~/.claude/claude-remote/update-check.json`)
+- Manual update: `claude-remote update`
+- Fetches `https://registry.npmjs.org/@hoangvu12/claude-remote/latest`
+- Executes `npm install -g @hoangvu12/claude-remote@latest`
+
+### Security Note
+
+Network fetch from npm registry. If compromised, could return malicious version string. However, npm install validates package integrity via registry signatures. The `execSync` pattern is discouraged but acceptable given controlled input.
 
 ---
 
 ## File System
 
-**Purpose**: Configuration, state persistence, PTY temp files.
+### Configuration Paths
 
-### KeyPaths
+- **Config dir**: `~/.claude/claude-remote/`
+  - `config.json` – User credentials (bot token, guild ID, category ID)
+  - `status` – Simple flag file (enabled/disabled)
+  - `update-check.json` – Latest version cache
+  - `pipe-registry/` – Named pipe metadata (PID, pipe name, cwd, startedAt)
 
-- Config: `~/.claude/claude-remote/config.json`
-- Settings: `~/.claude/settings.json` (Claude Code settings)
-- Skills: `~/.claude/skills/remote/`
-- JSONL transcript: `~/.claude/transcripts/<session-id>.jsonl`
-- Temp PTY files: OS temp directory (node-pty)
+- **Claude settings**: `~/.claude/settings.json` (modified by install)
+- **Skills**: `~/.claude/skills/remote/SKILL.md`
+- **Transcripts**: `~/.claude/transcripts/<session-id>.jsonl`
+- **Statusline**: Per-platform temp script (node invoking `statusline.js` from package)
 
-### Files watched
+### Watched Files
 
-- JSONL transcript (chokidar) - tailing new lines
-- Claude settings.json (for future features)
+- **JSONL transcript** (`chokidar`): Changes trigger parse → pipeline
+- **Settings.json** (potential future feature – detect hook changes)
+
+### Temp Files
+
+- PTY allocation uses OS temp directory (node-pty internal)
+- No explicit temp files created by this codebase.
 
 ---
 
 ## Claude Code Settings System
 
-**Purpose**: Integrates with Claude Code's extensibility points.
+Claude Code supports extensibility via:
 
-### Modified Settings
+- **Skills**: Slash commands (`/remote`) implemented as skill (`~/.claude/skills/remote/SKILL.md`)
+- **Hooks**: Event-driven scripts (`SessionStart`, `Stop`, `PostCompact`)
+- **Statusline**: Custom command output displayed in status bar
+
+### Installed Settings
+
+**Statusline**:
 
 ```json
 {
   "statusLine": {
     "type": "command",
-    "command": "node \"<claude-remote>/statusline.js\""
-  },
+    "command": "node \"<...>/statusline.js\""
+  }
+}
+```
+
+The statusline script outputs a single line with emoji indicating sync state.
+
+**Hooks**:
+
+```json
+{
   "hooks": {
-    "SessionStart": [{
-      "hooks": [{
-        "type": "command",
-        "command": "node \"<claude-remote>/session-hook.js\"",
-        "timeout": 5000
-      }]
-    }],
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "command", "command": "node \"<...>/session-hook.js\"", "timeout": 5000 }] }],
     "Stop": [...],
     "PostCompact": [...]
   }
 }
 ```
 
-The statusline.js script outputs a single line like "● Remote: ON" or "○ Remote: OFF" for display in Claude's status bar.
+`timeout: 5000` ensures hooks don't block Claude indefinitely.
 
 ---
 
 ## GitHub
 
-**Purpose**: Distribution via GitHub Packages (public npm).
-
-**Repository**: `https://github.com/hoangvu12/claude-remote.git`
-
-**Publish Workflow**: `.github/workflows/publish.yml`
-- On release publish → npm publish (public access)
+- **Repository**: https://github.com/hoangvu12/claude-remote.git
+- **Workflows**: `.github/workflows/publish.yml` – On GitHub Release → `npm publish`
+- **Issues**: GitHub Issues (not heavily used yet)
+- **Distribution**: npm (public scope `@hoangvu12`)
 
 ---
 
 ## Future Integration Points
 
-- **Telegram/Slack**: Provider interface designed for multiple backends (`src/provider.ts`)
-- **Webhooks**: Mentioned in README but not implemented
-- **Local HTTP API**: Could expose REST control plane (not yet)
+### Provider Abstraction for New Platforms
+
+`src/provider.ts` defines interfaces. To add Telegram or Slack:
+
+1. Implement `OutputProvider` (and optionally `ThreadCapable`, `InputCapable`)
+2. Register in daemon based on configuration
+3. Handle Telegram/Slack webhooks or bot APIs
+
+No core logic changes required.
+
+### Webhooks (Not Implemented)
+
+README mentions webhooks but code does not expose any HTTP server. Could be added for external integrations (CI/CD triggers, monitoring).
+
+### Local HTTP API (Not Implemented)
+
+Would allow programmatic control (e.g., VS Code extension). Not present.
+
+---
+
+## Dependency Graph
+
+```
+@hoangvu12/claude-remote
+├─ @clack/prompts (CLI UI)
+├─ chokidar (file watching)
+├─ discord.js (Discord bot)
+│  └─ ws (WebSocket)
+│  └─ @discordjs/rest (REST)
+├─ node-pty (PTY)
+└─ picocolors (terminal colors)
+
+Dev:
+└─ typescript, @types/node
+```
+
+All dependencies are pure JS (no native builds except `node-pty` which has prebuilds for Windows).
+
+---
+
+## Security Considerations of Integrations
+
+- **Discord bot token**: Stored in `~/.claude/claude-remote/config.json` (0600 permissions not enforced, but local file). Passed to daemon via environment variable (not visible to other processes via `/proc` on Windows? Not guaranteed).
+- **Claude Code transcript**: Contains full conversation, may include API keys if user pastes them. Not encrypted.
+- **IPC pipe**: No authentication; any local process could connect to pipe if they know name (low risk).
+- **Self-update**: Uses `npm install -g` with version from remote registry (trusts npm's signature verification).
+
+---
+
+## Integration Test Checklist
+
+When modifying integrations:
+
+1. ✅ Discord bot can connect and send messages
+2. ✅ Channel creation/reuse works
+3. ✅ Buttons and select menus appear and respond
+4. `/remote on` creates channel and starts forwarding
+5. Tool approvals (Allow/Deny) actually affect Claude
+6. Large outputs route to threads
+7. Task boards appear and update
+8. `/stop` sends SIGINT and stops Claude
+9. `/clear` creates new channel and resets context
+10. `/compact` compacts and displays summary
+11. `/remote off` disables sync without killing Claude
+
+---
+
+**Integration stability**: Discord API changes may break; discord.js v15 upcoming. Monitor compatibility.
