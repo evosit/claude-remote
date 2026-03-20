@@ -6,6 +6,7 @@ import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import { PIPE_REGISTRY } from "./utils.js";
+import * as platform from "./platform.js";
 
 export interface PipeEntry {
   pid: number;
@@ -20,12 +21,25 @@ export function findPipe(): string | null {
     for (const file of files) {
       try {
         const entry = JSON.parse(fs.readFileSync(path.join(PIPE_REGISTRY, file), "utf-8")) as PipeEntry;
+
+        // On non-Windows, verify socket file exists (stale entry cleanup)
+        if (platform.shouldCleanupSocket()) {
+          try {
+            fs.statSync(entry.pipe);
+          } catch {
+            // Socket file missing → stale entry
+            try { fs.unlinkSync(path.join(PIPE_REGISTRY, file)); } catch {}
+            continue;
+          }
+        }
+
+        // Check if process still alive
         try {
           process.kill(entry.pid, 0);
           return entry.pipe;
         } catch {
           // Process dead, clean up stale entry
-          try { fs.unlinkSync(path.join(PIPE_REGISTRY, file)); } catch { /* race */ }
+          try { fs.unlinkSync(path.join(PIPE_REGISTRY, file)); } catch {}
         }
       } catch { /* skip bad files */ }
     }
