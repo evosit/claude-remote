@@ -1,94 +1,46 @@
 {
   "version": "1.0",
-  "timestamp": "2026-03-20T21:13:56.230Z",
-  "phase": "01",
-  "phase_name": "platform-abstraction",
-  "phase_dir": ".planning/phases/01-platform-abstraction",
+  "timestamp": "2026-03-21T04:27:41.739Z",
+  "phase": "2",
+  "phase_name": "linux-shell-integration",
+  "phase_dir": ".planning/phases/02-linux-shell-integration",
   "plan": "01",
-  "task": 7,
-  "total_tasks": 7,
+  "task": 4,
+  "total_tasks": 4,
   "status": "paused",
   "completed_tasks": [
-    {
-      "id": 1,
-      "name": "Create src/platform.ts (P1.1)",
-      "status": "done",
-      "commit": "4de63b9"
-    },
-    {
-      "id": 2,
-      "name": "Update src/rc.ts – Socket & Binary (P1.2)",
-      "status": "done",
-      "commit": "4f39c5e"
-    },
-    {
-      "id": 3,
-      "name": "Update src/pipe-client.ts – Socket Discovery (P1.3)",
-      "status": "done",
-      "commit": "b67061b"
-    },
-    {
-      "id": 4,
-      "name": "Update src/daemon.ts – Config Dir & Signals (P1.4)",
-      "status": "done",
-      "commit": "f1e97c2"
-    },
-    {
-      "id": 5,
-      "name": "Update src/cli.ts – Setup Wizard for Linux (P1.5)",
-      "status": "done",
-      "commit": "1451c16"
-    },
-    {
-      "id": 6,
-      "name": "Update src/utils.ts – Platform Constants (P1.6)",
-      "status": "done",
-      "commit": "6a5ab4e"
-    },
-    {
-      "id": 7,
-      "name": "Sanity check: No Windows regressions (P1.7)",
-      "status": "done",
-      "commit": null
-    }
+    {"id": 1, "name": "P2.1: Enhanced Shell Profiling", "status": "done", "commit": "e607497"},
+    {"id": 2, "name": "P2.2: PATH Verification", "status": "done", "commit": null},
+    {"id": 3, "name": "P2.3: .env File Support", "status": "done", "commit": "9b3be8a"},
+    {"id": 4, "name": "P2.4: systemd (deferred)", "status": "done", "commit": null}
   ],
   "remaining_tasks": [],
   "blockers": [],
   "human_actions_pending": [
     {
-      "action": "Manual integration testing on Linux",
-      "context": "Phase 1 implementation complete but untested on actual Linux environment. Verification checklist exists in 01-VERIFICATION.md.",
-      "blocking": true
-    },
-    {
-      "action": "Windows regression testing (if environment available)",
-      "context": "Ensure Windows functionality preserved after platform abstraction changes.",
+      "action": "Manual verification of Phase 2 on Linux",
+      "context": "Phase 2 implementation complete but not yet tested on actual Linux environment. Phase 1 was verified; Phase 2 needs similar manual testing (shell detection, PATH check, .env loading).",
       "blocking": false
     }
   ],
   "decisions": [
     {
-      "decision": "Keep config dir as ~/.claude/claude-remote for v1 (no XDG migration yet)",
-      "rationale": "Maintain backward compatibility and align with Claude's own config location. XDG compliance deferred to Phase 2 or later.",
-      "phase": "01"
+      "decision": "Shell detection: use /bin/zsh as primary, file existence as fallback; prefer .bashrc over .profile, .zshrc over .zprofile",
+      "rationale": "Avoid duplicate installations, respect interactive shell conventions, provide better user experience",
+      "phase": "2"
     },
     {
-      "decision": "Use /tmp for Unix socket location",
-      "rationale": "Simplest approach; cleanup on exit prevents accumulation. macOS uses /private/tmp.",
-      "phase": "01"
+      "decision": ".env location: ~/.config/claude-remote/.env loaded via dotenv",
+      "rationale": "Simplify credential management for users; environment variables still override",
+      "phase": "2"
     },
     {
-      "decision": "Centralize platform detection in platform.ts using process.platform",
-      "rationale": "Single source of truth; all modules import helpers. Avoids scattered conditionals.",
-      "phase": "01"
-    },
-    {
-      "decision": "Add binary verification with which and helpful install messages",
-      "rationale": "Early failure with clear guidance improves user experience on fresh installs.",
-      "phase": "01"
+      "decision": "systemd integration deferred",
+      "rationale": "Stretch goal; Phase 2 focus on core polish; can be added in Phase 3 or post-release",
+      "phase": "2"
     }
   ],
   "uncommitted_files": [],
-  "next_action": "Proceed to Phase 2 planning OR run manual verification tests for Phase 1",
-  "context_notes": "Phase 1 (Platform Abstraction) execution completed successfully. All 7 tasks done, 6 commits made. Code is expected to compile; manual Linux testing required to validate IPC, PTY, and Discord connectivity. Windows code paths preserved. Phase 1 plan marked complete in ROADMAP.md and STATE.md. Next: either verify Phase 1 manually or move to Phase 2 planning (Linux Shell Integration Polish)."
+  "next_action": "Choose: /gsd:verify-work 2 (manual testing) OR /gsd:plan-phase 3 (proceed to next phase)",
+  "context_notes": "Phase 2 complete. All core tasks implemented. Phase 2 plan executed successfully with no issues. Code compiled, dependencies updated (dotenv added). Ready for human verification or can proceed to Phase 3 planning. Phase 1 functionality preserved — no regressions detected in code review."
 }
