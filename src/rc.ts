@@ -4,7 +4,7 @@ import path from "node:path";
 import fs from "node:fs";
 import os from "node:os";
 import { fork, type ChildProcess } from "node:child_process";
-import { which } from "which";
+import which from "which";
 import { STATUS_FLAG, PIPE_REGISTRY, safeUnlink } from "./utils.js";
 import * as platform from "./platform.js";
 import type { DaemonToParent, PipeMessage } from "./types.js";

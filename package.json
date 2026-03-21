@@ -13,7 +13,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "prepublishOnly": "tsc"
+    "prepublishOnly": "tsc",
+    "test:smoke": "claude-remote --version && claude-remote help"
   },
   "keywords": [
     "claude",
@@ -36,10 +37,12 @@
     "discord.js": "^14.18.0",
     "dotenv": "^16.4.5",
     "node-pty": "^1.0.0",
-    "picocolors": "^1.1.1"
+    "picocolors": "^1.1.1",
+    "which": "^2.0.2"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",
+    "@types/which": "^3.0.4",
     "typescript": "^5.8.2"
   }
 }

@@ -573,7 +573,7 @@ async function setup() {
       const selected = await p.multiselect({
         message: 'Install claude alias to:',
         options: targets.map(t => ({ value: t.shell, label: `${t.description} (${t.profilePath})` })),
-        initialValue: targets.map(t => t.shell),
+        initialValues: targets.map(t => t.shell),
       });
 
       if (p.isCancel(selected)) {
@@ -856,6 +856,9 @@ switch (command) {
     ${pc.cyan("claude-remote uninstall")}    Remove hook and config
     ${pc.cyan("claude-remote help")}         Show this help
 `);
+    break;
+  case "--version":
+    console.log(PKG_VERSION);
     break;
   default:
     await run();
