@@ -1,0 +1,49 @@
+name: Multi-Distro Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3
+
+      - name: Install Claude Code CLI (mock)
+        run: |
+          # In CI we cannot actually install Claude (requires curl to external).
+          # Instead, we'll create a mock `claude` script that simulates basic behavior.
+          echo -e '#!/bin/bash\necho "Mock Claude: $@"' > /tmp/claude
+          chmod +x /tmp/claude
+          echo 'export PATH="/tmp:$PATH"' >> $GITHUB_ENV
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke tests
+        run: |
+          claude-remote --version
+          claude-remote help
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-ubuntu-logs
+          path: |
+            ~/.claude-claude-remote/
+            /tmp/claude-remote-*.sock
