@@ -89,6 +89,11 @@ export function sendPipeMessage(pipeName: string, msg: Record<string, unknown>):
       settled = true;
       clearTimeout(timer);
       d('sendPipeMessage: error %s', err.message);
+      // Enhance error with helpful hint for common issues
+      const nodeErr = err as any;
+      if (nodeErr.code === 'ECONNREFUSED' || nodeErr.code === 'EACCES') {
+        err.message = `${err.message}. Ensure claude-remote daemon is running and you have permission to access the socket (run as same user).`;
+      }
       reject(err);
     });
   });
