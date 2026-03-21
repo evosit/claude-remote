@@ -42,6 +42,7 @@ const claudeArgs = [...additionalClaudeArgs, ...cliArgs];
 const initialPermissionMode = claudeArgs.includes("--dangerously-skip-permissions") ? "bypassPermissions" : "default";
 
 let daemon: ChildProcess | null = null;
+let daemonStopping = false; // Prevent auto-restart during intentional shutdown
 let sessionId: string | null = null;
 let transcriptPath: string | null = null;
 let projectDir = process.cwd();
@@ -296,8 +297,15 @@ function startDaemon(channelName?: string) {
 
   daemon.on("exit", (code) => {
     daemon = null;
+    // If we intentionally stopped the daemon, don't restart
+    if (daemonStopping) {
+      daemonStopping = false; // reset for next session
+      d('daemon exit: intentional stop, not restarting');
+      return;
+    }
     // Auto-restart on hot-reload exit or unexpected crash
     if (daemonWasEnabled && code !== null) {
+      d('daemon exit: code=%s, will restart', code);
       setTimeout(() => startDaemon(lastChannelName), 1000);
     }
   });
@@ -318,6 +326,7 @@ function stopDaemon() {
     d('stopDaemon: no daemon running');
     return;
   }
+  daemonStopping = true;
   d('stopDaemon: killing daemon (pid=%d)', daemon.pid);
   daemon.kill("SIGTERM");
   daemon = null;
