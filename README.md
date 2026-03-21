@@ -20,6 +20,28 @@ When enabled, each Claude session gets its own Discord channel. Messages, tool c
 
 You need Windows or Linux (macOS may work but is untested), Node 18+, and a Discord bot.
 
+### Platform Support
+
+- **Windows** — fully supported
+- **Linux** — Ubuntu 22.04+, Fedora, Alpine 3.19+ (with extra build steps), WSL2
+- **macOS** — untested but may work
+
+If you run into issues on your distribution, consult `COMPATIBILITY.md` for guidance.
+
+### Prerequisites
+
+- **Node.js 18+** — use [nvm](https://github.com/nvm-sh/nvm) or your distro's package manager
+- **Build tools** for native modules (`node-pty`):
+  - Ubuntu/Debian: `sudo apt-get install -y build-essential python3`
+  - Fedora: `sudo dnf groupinstall "Development Tools" && sudo dnf install -y python3`
+  - Alpine: `sudo apk add build-base python3 linux-headers` (see COMPATIBILITY.md)
+  - WSL2: same as Ubuntu
+- **Git** and **curl**
+- **Claude Code CLI** — install via:
+  ```bash
+  curl -fsSL https://claude.ai/install.sh | bash
+  ```
+
 ### Creating the bot
 
 1. [Discord Developer Portal](https://discord.com/developers/applications) → New Application → Bot tab → copy token
@@ -36,9 +58,81 @@ claude-remote setup
 
 Setup walks you through entering your bot token, picking your server, and installing the hooks/statusline into Claude Code. It can also set up a `claude` shell alias so you don't have to type `claude-remote` every time.
 
-### Linux notes
+### Installation on Linux
 
-On Linux, ensure you have build tools installed (`build-essential` on Debian/Ubuntu, `dnf groupinstall "Development Tools"` on Fedora). For **Alpine Linux**, additional steps are required — see `COMPATIBILITY.md`.
+After installing Node.js and build tools (see Prerequisites above), you can install `claude-remote` globally:
+
+```bash
+npm install -g @hoangvu12/claude-remote
+```
+
+This installs two binaries: `claude-remote` and `remote-cmd`.
+
+**Alpine Linux** requires additional build dependencies; see `COMPATIBILITY.md` for full instructions.
+
+#### Shell alias (optional)
+
+You can set up a `claude` alias so you don't have to type `claude-remote` every time:
+
+```bash
+claude-remote setup
+```
+
+The setup wizard will offer to install the alias to your shell profile (`.bashrc`, `.zshrc`, or `config.fish`).
+
+### Configuration
+
+You can provide Discord credentials via environment variables or a `.env` file:
+
+- **Environment variables:** `DISCORD_BOT_TOKEN`, `DISCORD_GUILD_ID`, `DISCORD_CATEGORY_ID`
+- **`.env` file:** Place a `.env` file in the config directory (`~/.config/claude-remote/.env`) with those variables. Environment variables take precedence over the `.env` file.
+
+This is useful for non-interactive setups or to avoid re-entering tokens.
+
+### Troubleshooting
+
+**`EACCES` or permission errors during global install**
+
+If you get permission errors installing globally, use a user-local prefix:
+
+```bash
+npm install -g --prefix ~/.npm-global @hoangvu12/claude-remote
+```
+
+Then add `~/.npm-global/bin` to your `PATH`.
+
+Alternatively, fix directory permissions or use `sudo` (not recommended for security).
+
+**`claude` command not found**
+
+Ensure your npm global bin directory is in your `PATH`. Common locations:
+
+- `~/.npm-global/bin`
+- `~/.local/bin`
+- `/usr/local/bin`
+
+Verify with:
+
+```bash
+which claude-remote
+```
+
+If not found, add the appropriate directory to your shell's `PATH` (e.g., in `~/.bashrc`): `export PATH="$HOME/.npm-global/bin:$PATH"`.
+
+**Discord bot cannot read messages or manage channels**
+
+Check that your bot has the required **Privileged Gateway Intents**:
+
+- **Message Content Intent** — must be enabled in the Discord Developer Portal
+- Bot permissions: Send Messages, Manage Channels, Read Message History, Manage Threads
+
+**Socket permission errors (Linux)**
+
+Socket files are created in `/tmp`. If you see permission errors, ensure you're running `claude-remote` as the same user that installed it. Avoid mixing `sudo` and user installs. The socket is created as `/tmp/claude-remote-<pid>.sock` and removed on exit.
+
+**Claude binary not found**
+
+If `claude` is not in your `PATH`, install it via the official install script or ensure `~/.local/bin` is in your `PATH` (the default install location for the Claude Code CLI on Linux).
 
 ## Usage
 
