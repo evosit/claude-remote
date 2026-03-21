@@ -40,7 +40,7 @@ process.stdin.on("end", () => {
   let isActive = false;
   const pipeName = process.env.CLAUDE_REMOTE_PIPE;
   if (pipeName) {
-    const rcPidMatch = pipeName.match(/claude-remote-(\d+)$/);
+    const rcPidMatch = pipeName.match(/claude-remote-(\d+)(?:\.sock)?$/);
     const rcPid = rcPidMatch ? parseInt(rcPidMatch[1], 10) : null;
     try {
       const flagPid = parseInt(fs.readFileSync(STATUS_FLAG, "utf-8").trim(), 10);
