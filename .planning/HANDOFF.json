@@ -1,46 +1,73 @@
 {
   "version": "1.0",
-  "timestamp": "2026-03-21T04:27:41.739Z",
-  "phase": "2",
-  "phase_name": "linux-shell-integration",
-  "phase_dir": ".planning/phases/02-linux-shell-integration",
-  "plan": "01",
-  "task": 4,
-  "total_tasks": 4,
+  "timestamp": "2025-03-21T21:30:00Z",
   "status": "paused",
-  "completed_tasks": [
-    {"id": 1, "name": "P2.1: Enhanced Shell Profiling", "status": "done", "commit": "e607497"},
-    {"id": 2, "name": "P2.2: PATH Verification", "status": "done", "commit": null},
-    {"id": 3, "name": "P2.3: .env File Support", "status": "done", "commit": "9b3be8a"},
-    {"id": 4, "name": "P2.4: systemd (deferred)", "status": "done", "commit": null}
-  ],
-  "remaining_tasks": [],
-  "blockers": [],
-  "human_actions_pending": [
+  "current_branch": "master",
+  "last_commit": "b9b7877",
+  "work_summary": "Reverted to original state to start clean; identified 7 critical bugs that need fixing",
+  "issues_identified": [
     {
-      "action": "Manual verification of Phase 2 on Linux",
-      "context": "Phase 2 implementation complete but not yet tested on actual Linux environment. Phase 1 was verified; Phase 2 needs similar manual testing (shell detection, PATH check, .env loading).",
-      "blocking": false
-    }
-  ],
-  "decisions": [
-    {
-      "decision": "Shell detection: use /bin/zsh as primary, file existence as fallback; prefer .bashrc over .profile, .zshrc over .zprofile",
-      "rationale": "Avoid duplicate installations, respect interactive shell conventions, provide better user experience",
-      "phase": "2"
+      "id": 1,
+      "description": "Skill has conflicting configuration: both 'model: haiku' and 'disable-model-invocation: true'",
+      "error": "Skill remote cannot be used with Skill tool due to disable-model-invocation",
+      "fix": "Remove model field from SKILL.md entirely"
     },
     {
-      "decision": ".env location: ~/.config/claude-remote/.env loaded via dotenv",
-      "rationale": "Simplify credential management for users; environment variables still override",
-      "phase": "2"
+      "id": 2,
+      "description": "Skill command 'remote-cmd $ARGUMENTS' relies on PATH lookup",
+      "error": "remote-cmd: command not found (when executed by Claude Code)",
+      "fix": "Use absolute path to remote-cmd.js via getInstalledPath() in skill command"
     },
     {
-      "decision": "systemd integration deferred",
-      "rationale": "Stretch goal; Phase 2 focus on core polish; can be added in Phase 3 or post-release",
-      "phase": "2"
+      "id": 3,
+      "description": "Installation includes invalid 'PostCompact' hook event",
+      "error": "Invalid key in record (settings.json validation)",
+      "fix": "Remove PostCompact from HOOK_EVENT_TYPES and installation code"
+    },
+    {
+      "id": 4,
+      "description": "Missing UserPromptSubmit hook for /discord commands",
+      "error": "UserPromptSubmit hook not installed, so discord-hook never runs",
+      "fix": "Add UserPromptSubmit hook with discord-hook.js"
+    },
+    {
+      "id": 5,
+      "description": "discord-hook only accepts session_id (snake_case)",
+      "error": "sessionId becomes null → 'session none' errors",
+      "fix": "Accept both: const sessionId = input.session_id || input.sessionId"
+    },
+    {
+      "id": 6,
+      "description": "cleanRemoteHooks() doesn't fully clean legacy or malformed entries",
+      "error": "Stale hooks with old paths survive reinstall → duplicate/incorrect hooks",
+      "fix": "Implement removeAllRemoteHooks() that removes all known claude-remote hooks from all events including PostCompact"
+    },
+    {
+      "id": 7,
+      "description": "import.meta.dirname points to src/ during development",
+      "error": "Hooks installed with paths like '/home/user/claude-remote/src/hook.js' instead of installed 'dist/'",
+      "fix": "Add getPackageRoot() walk-up logic; use getInstalledPath() for all hook paths"
     }
   ],
-  "uncommitted_files": [],
-  "next_action": "Choose: /gsd:verify-work 2 (manual testing) OR /gsd:plan-phase 3 (proceed to next phase)",
-  "context_notes": "Phase 2 complete. All core tasks implemented. Phase 2 plan executed successfully with no issues. Code compiled, dependencies updated (dotenv added). Ready for human verification or can proceed to Phase 3 planning. Phase 1 functionality preserved — no regressions detected in code review."
+  "files_to_modify": [
+    "src/utils.ts - add getPackageRoot(), getInstalledPath()",
+    "src/cli.ts - fix skill, hooks, cleanup, auto-setup, alias default, uninstall",
+    "src/rc.ts - use getInstalledPath for daemonPath",
+    "src/daemon.ts - use getInstalledPath for DAEMON_JS_PATH",
+    "src/statusline.ts - use getInstalledPath for package.json",
+    "src/discord-hook.ts - accept both session ID fields",
+    "src/session-hook.ts - add error logging"
+  ],
+  "proposed_solution": "Comprehensive fix: 1) Remove model from skill, use absolute node path to remote-cmd.js; 2) Remove PostCompact, handle /compact in discord-hook; 3) Install UserPromptSubmit; 4) Runtime package root detection for all paths; 5) Comprehensive hook cleanup; 6) First-run auto-setup; 7) Alias default = false; 8) Enhanced uninstall.",
+  "next_steps": [
+    "Create feature branch",
+    "Implement all fixes systematically",
+    "Build and test: npm run build",
+    "Clean reinstall to apply all changes",
+    "Verify all functionality"
+  ],
+  "blockers": [
+    "Need to implement changes without breaking existing working state",
+    "Must test carefully as multiple interdependent issues"
+  ]
 }
