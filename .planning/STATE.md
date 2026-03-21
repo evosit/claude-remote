@@ -36,10 +36,10 @@ Plans: 2 of 4 completed (P4.1, P4.2 done; P4.3, P4.4 pending)
 | 2026-03-21 | Removed invalid PostCompact hook, added missing UserPromptSubmit hook |
 | 2026-03-21 | Changed alias install default to false to avoid surprising users |
 | 2026-03-21 | Implemented first-run auto-setup (runs setup automatically when no config exists) |
+| 2026-03-21 | Updated config directory to be XDG-compliant on Linux: `~/.config/claude-remote` instead of `~/.claude/claude-remote` |
 | 2025-03-20 | Adopted GSD workflow for v2.0 development |
 | 2025-03-20 | Platform abstraction approach confirmed: use process.platform detection and centralized platform.ts module |
 | 2025-03-20 | IPC strategy: Unix domain sockets for Linux, Windows named pipes unchanged |
-| 2025-03-20 | Config directory: Keep `~/.claude/claude-remote/` for consistency (no XDG change) |
 | 2025-03-20 | Shell integration: Support bash, zsh, fish with marker-based idempotent installation |
 
 ---
