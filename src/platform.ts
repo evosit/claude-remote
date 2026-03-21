@@ -35,8 +35,8 @@ export function getConfigDir(): string {
   if (getPlatform() === 'win32') {
     dir = join(home, 'AppData', 'Roaming', 'claude-remote');
   } else {
-    // Keep existing config location for v1 (no XDG migration yet)
-    dir = join(home, '.claude', 'claude-remote');
+    // XDG-compliant config directory on Linux/macOS
+    dir = join(home, '.config', 'claude-remote');
   }
   d('getConfigDir: %s', dir);
   return dir;
