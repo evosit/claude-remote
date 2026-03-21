@@ -7,10 +7,10 @@ import path from "node:path";
 import os from "node:os";
 import { execSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { CONFIG_DIR } from "./utils.js";
 import * as platform from "./platform.js";
 import type { Config } from "./types.js";
 
+const CONFIG_DIR = platform.getConfigDir();
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 const UPDATE_CACHE = path.join(CONFIG_DIR, "update-check.json");
 const CHECK_INTERVAL = 60 * 60 * 1000; // 1 hour
@@ -205,7 +205,7 @@ function uninstallHooksAndStatusline() {
 
 const ALIAS_MARKER = "# claude-remote-alias";
 
-type ShellType = "powershell" | "pwsh" | "gitbash" | "cmd";
+type ShellType = "powershell" | "pwsh" | "gitbash" | "cmd" | "bash" | "zsh" | "fish";
 
 interface AliasTarget {
   shell: ShellType;
@@ -260,20 +260,69 @@ function getAliasTargets(): AliasTarget[] {
       description: "CMD",
     });
   } else {
-    // Linux/macOS: bash, zsh, fish
-    const shells = [
-      { name: 'bash', path: path.join(home, '.bashrc'), line: `alias claude='claude-remote' ${ALIAS_MARKER}`, desc: 'Bash' },
-      { name: 'zsh', path: path.join(home, '.zshrc'), line: `alias claude='claude-remote' ${ALIAS_MARKER}`, desc: 'Zsh' },
-      { name: 'fish', path: path.join(home, '.config', 'fish', 'config.fish'), line: `function claude; claude-remote $argv; end ${ALIAS_MARKER}`, desc: 'Fish' },
-    ];
+    // Linux/macOS: detect shells using $SHELL and file existence with preference ordering
+    const SHELL = process.env.SHELL || '';
+    const detectedShells = new Set<string>();
 
-    for (const shell of shells) {
-      if (fs.existsSync(shell.path)) {
+    // Primary: $SHELL indicates user's default shell
+    if (SHELL.includes('bash')) detectedShells.add('bash');
+    else if (SHELL.includes('zsh')) detectedShells.add('zsh');
+    else if (SHELL.includes('fish')) detectedShells.add('fish');
+
+    // Fallback: check config file existence, prefer interactive over login
+    const home = os.homedir();
+    const bashrc = path.join(home, '.bashrc');
+    const profile = path.join(home, '.profile');
+    const bashProfile = path.join(home, '.bash_profile');
+    const zshrc = path.join(home, '.zshrc');
+    const zprofile = path.join(home, '.zprofile');
+    const fishConfig = path.join(home, '.config', 'fish', 'config.fish');
+
+    // Only add if not already detected via $SHELL; prefer .bashrc over .profile, .zshrc over .zprofile
+    if (!detectedShells.has('bash')) {
+      if (fs.existsSync(bashrc)) detectedShells.add('bash');
+      else if (fs.existsSync(profile)) detectedShells.add('bash');
+      else if (fs.existsSync(bashProfile)) detectedShells.add('bash');
+    }
+    if (!detectedShells.has('zsh')) {
+      if (fs.existsSync(zshrc)) detectedShells.add('zsh');
+      else if (fs.existsSync(zprofile)) detectedShells.add('zsh');
+    }
+    if (!detectedShells.has('fish')) {
+      if (fs.existsSync(fishConfig)) detectedShells.add('fish');
+    }
+
+    // Build targets from detectedShells, selecting appropriate file per shell
+    for (const shell of detectedShells) {
+      let targetPath: string | null = null;
+      let aliasLine: string = '';
+      const desc = shell === 'bash' ? 'Bash' : shell === 'zsh' ? 'Zsh' : 'Fish';
+
+      switch (shell) {
+        case 'bash':
+          // Prefer .bashrc, fallback to .profile or .bash_profile whichever exists
+          if (fs.existsSync(bashrc)) targetPath = bashrc;
+          else if (fs.existsSync(profile)) targetPath = profile;
+          else if (fs.existsSync(bashProfile)) targetPath = bashProfile;
+          aliasLine = `alias claude='claude-remote' ${ALIAS_MARKER}`;
+          break;
+        case 'zsh':
+          if (fs.existsSync(zshrc)) targetPath = zshrc;
+          else if (fs.existsSync(zprofile)) targetPath = zprofile;
+          aliasLine = `alias claude='claude-remote' ${ALIAS_MARKER}`;
+          break;
+        case 'fish':
+          targetPath = fishConfig;
+          aliasLine = `function claude; claude-remote $argv; end ${ALIAS_MARKER}`;
+          break;
+      }
+
+      if (targetPath && fs.existsSync(targetPath)) {
         targets.push({
-          shell: shell.name as 'bash' | 'zsh' | 'fish',
-          profilePath: shell.path,
-          aliasLine: shell.line,
-          description: shell.desc,
+          shell: shell as 'bash' | 'zsh' | 'fish',
+          profilePath: targetPath,
+          aliasLine,
+          description: desc,
         });
       }
     }
@@ -517,23 +566,44 @@ async function setup() {
   });
 
   if (!p.isCancel(aliasSetup) && aliasSetup) {
-    const targets = getAliasTargets();
+    let targets = getAliasTargets();
 
-    await tasks(
-      targets.map((target) => ({
-        title: `${target.description} alias`,
-        task: async () => {
-          installAlias(target);
-          return `Installed → ${pc.dim(target.profilePath)}`;
-        },
-      }))
-    );
+    // If multiple shells detected, prompt user to select which to install to
+    if (targets.length > 1) {
+      const selected = await p.multiselect({
+        message: 'Install claude alias to:',
+        options: targets.map(t => ({ value: t.shell, label: `${t.description} (${t.profilePath})` })),
+        initialValue: targets.map(t => t.shell),
+      });
 
-    if (process.platform === "win32" && targets.some((t) => t.shell === "cmd")) {
-      p.log.info(`CMD: added ${pc.dim("claude.cmd")} shim to ${pc.dim("~/.local/bin")}`);
+      if (p.isCancel(selected)) {
+        p.cancel("Setup cancelled.");
+        process.exit(0);
+      }
+
+      // Filter to only selected shells
+      targets = targets.filter(t => selected.includes(t.shell));
     }
 
-    p.log.info(`Restart your terminal for the ${pc.cyan("claude")} alias to take effect.`);
+    if (targets.length === 0) {
+      p.log.warning("No shell profiles detected. Please create ~/.bashrc, ~/.zshrc, or fish config manually.");
+    } else {
+      await tasks(
+        targets.map((target) => ({
+          title: `${target.description} alias`,
+          task: async () => {
+            installAlias(target);
+            return `Installed → ${pc.dim(target.profilePath)}`;
+          },
+        }))
+      );
+
+      if (process.platform === "win32" && targets.some((t) => t.shell === "cmd")) {
+        p.log.info(`CMD: added ${pc.dim("claude.cmd")} shim to ${pc.dim("~/.local/bin")}`);
+      }
+
+      p.log.info(`Restart your terminal for the ${pc.cyan("claude")} alias to take effect.`);
+    }
   }
 
   // ── Summary ──
