@@ -14,7 +14,8 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "tsc",
-    "test:smoke": "claude-remote --version && claude-remote help"
+    "test:smoke": "claude-remote --version && claude-remote help",
+    "debug": "DEBUG=claude-remote:* claude-remote $*"
   },
   "keywords": [
     "claude",
@@ -34,6 +35,7 @@
   "dependencies": {
     "@clack/prompts": "^1.1.0",
     "chokidar": "^4.0.3",
+    "debug": "^4.4.3",
     "discord.js": "^14.18.0",
     "dotenv": "^16.4.5",
     "node-pty": "^1.0.0",
@@ -41,6 +43,7 @@
     "which": "^2.0.2"
   },
   "devDependencies": {
+    "@types/debug": "^4.1.13",
     "@types/node": "^22.13.10",
     "@types/which": "^3.0.4",
     "typescript": "^5.8.2"

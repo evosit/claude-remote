@@ -9,6 +9,9 @@ import { STATUS_FLAG, PIPE_REGISTRY, safeUnlink } from "./utils.js";
 import * as platform from "./platform.js";
 import type { DaemonToParent, PipeMessage } from "./types.js";
 import dotenv from 'dotenv';
+import debug from 'debug';
+
+const d = debug('claude-remote:rc');
 
 // Load .env file from config directory (if present)
 dotenv.config({ path: path.join(platform.getConfigDir(), '.env') });
@@ -17,6 +20,7 @@ dotenv.config({ path: path.join(platform.getConfigDir(), '.env') });
 
 const PIPE_PATH = platform.getPipePath();
 const CLAUDE_BIN = platform.getClaudeBinary();
+d('PIPE_PATH=%s, CLAUDE_BIN=%s', PIPE_PATH, CLAUDE_BIN);
 
 // ── State ──
 
@@ -49,8 +53,11 @@ process.env.CLAUDE_REMOTE_PIPE = PIPE_PATH;
 // Verify Claude binary exists in PATH before spawning
 function verifyClaudeInPath(): string | null {
   try {
-    return which.sync(CLAUDE_BIN);
-  } catch {
+    const path = which.sync(CLAUDE_BIN);
+    d('verifyClaudeInPath: found at %s', path);
+    return path;
+  } catch (err) {
+    d('verifyClaudeInPath: not found');
     return null;
   }
 }
@@ -114,6 +121,8 @@ function startPipeServer() {
           transcriptPath = msg.transcriptPath;
           if (msg.cwd) projectDir = msg.cwd;
 
+          d('session-registered: sid=%s, cwd=%s', sessionId, projectDir);
+
           // If daemon was running on a different session, restart it
           if (daemonWasEnabled && oldSessionId && oldSessionId !== sessionId) {
             stopDaemon();
@@ -142,7 +151,9 @@ function startPipeServer() {
     });
   });
 
-  pipeServer.on("error", () => {});
+  pipeServer.on("error", (err) => {
+    d('pipeServer error: %s', err.message);
+  });
 
   // Clean up stale socket on non-Windows before listening
   if (platform.shouldCleanupSocket()) {
@@ -150,6 +161,7 @@ function startPipeServer() {
   }
 
   pipeServer.listen(PIPE_PATH, () => {
+    d('pipeServer listening on %s', PIPE_PATH);
     registerPipe();
   });
 }
@@ -172,8 +184,11 @@ function unregisterPipe() {
 
 function cleanupPipeServer() {
   if (pipeServer) {
+    d('cleanupPipeServer: closing pipeServer');
     pipeServer.close();
     pipeServer = null;
+  } else {
+    d('cleanupPipeServer: pipeServer already null');
   }
   unregisterPipe();
 }
@@ -254,7 +269,11 @@ function startDaemon(channelName?: string) {
 }
 
 function stopDaemon() {
-  if (!daemon) return;
+  if (!daemon) {
+    d('stopDaemon: no daemon running');
+    return;
+  }
+  d('stopDaemon: killing daemon (pid=%d)', daemon.pid);
   daemon.kill("SIGTERM");
   daemon = null;
   setStatusFlag(false);
@@ -270,10 +289,12 @@ startPipeServer();
 // ── Graceful shutdown ──
 
 function shutdown() {
+  d('shutdown: beginning');
   restoreTerminal();
   stopDaemon();
   cleanupPipeServer();
   proc.kill();
+  d('shutdown: proc killed, will exit after onExit or timeout');
   // Don't process.exit() here — let proc.onExit handle it so node-pty can clean up.
   // Fallback exit in case the PTY doesn't fire onExit.
   setTimeout(() => process.exit(0), 500);

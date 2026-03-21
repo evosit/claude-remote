@@ -1,30 +1,45 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import debug from 'debug';
+
+const d = debug('claude-remote:platform');
 
 export function getPlatform(): 'win32' | 'linux' | 'darwin' {
-  return process.platform as 'win32' | 'linux' | 'darwin';
+  const platform = process.platform as 'win32' | 'linux' | 'darwin';
+  d('getPlatform: %s', platform);
+  return platform;
 }
 
 export function getClaudeBinary(): string {
-  return getPlatform() === 'win32' ? 'claude.exe' : 'claude';
+  const binary = getPlatform() === 'win32' ? 'claude.exe' : 'claude';
+  d('getClaudeBinary: %s', binary);
+  return binary;
 }
 
 export function getPipePath(): string {
   const pid = process.pid;
+  let path: string;
   if (getPlatform() === 'win32') {
-    return `\\\\.\\pipe\\claude-remote-${pid}`;
+    path = `\\\\.\\pipe\\claude-remote-${pid}`;
+  } else {
+    const tmpDir = getPlatform() === 'darwin' ? '/private/tmp' : '/tmp';
+    path = join(tmpDir, `claude-remote-${pid}.sock`);
   }
-  const tmpDir = getPlatform() === 'darwin' ? '/private/tmp' : '/tmp';
-  return join(tmpDir, `claude-remote-${pid}.sock`);
+  d('getPipePath: %s', path);
+  return path;
 }
 
 export function getConfigDir(): string {
   const home = homedir();
+  let dir: string;
   if (getPlatform() === 'win32') {
-    return join(home, 'AppData', 'Roaming', 'claude-remote');
+    dir = join(home, 'AppData', 'Roaming', 'claude-remote');
+  } else {
+    // Keep existing config location for v1 (no XDG migration yet)
+    dir = join(home, '.claude', 'claude-remote');
   }
-  // Keep existing config location for v1 (no XDG migration yet)
-  return join(home, '.claude', 'claude-remote');
+  d('getConfigDir: %s', dir);
+  return dir;
 }
 
 export function getShellProfiles(): Array<{ path: string; line: string; marker: string }> {
@@ -32,6 +47,7 @@ export function getShellProfiles(): Array<{ path: string; line: string; marker: 
   const ALIAS_MARKER = '# claude-remote alias — do not edit manually';
 
   if (getPlatform() === 'win32') {
+    d('getShellProfiles: Windows -> []');
     return []; // Windows shells handled separately in cli.ts
   }
 
@@ -58,9 +74,12 @@ export function getShellProfiles(): Array<{ path: string; line: string; marker: 
     marker: ALIAS_MARKER,
   });
 
+  d('getShellProfiles: %d targets', targets.length);
   return targets;
 }
 
 export function shouldCleanupSocket(): boolean {
-  return getPlatform() !== 'win32';
+  const should = getPlatform() !== 'win32';
+  d('shouldCleanupSocket: %s', should);
+  return should;
 }

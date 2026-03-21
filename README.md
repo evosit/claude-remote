@@ -99,6 +99,27 @@ claude-remote uninstall
 npm uninstall -g @hoangvu12/claude-remote
 ```
 
+## Debugging
+
+If you encounter issues, enable debug logging to get detailed diagnostics:
+
+```bash
+# Linux/macOS
+DEBUG=claude-remote:* claude-remote -p "your prompt"
+
+# Windows PowerShell
+$env:DEBUG="claude-remote:*"; claude-remote -p "your prompt"
+```
+
+Debug output is sent to stderr and includes namespace-prefixed messages:
+
+- `claude-remote:platform` — Platform detection, config dir, pipe path, shell profiles
+- `claude-remote:rc` — Parent process: pipe server start/stop, daemon lifecycle, binary lookup
+- `claude-remote:pipe-client` — Pipe discovery, connection attempts, timeouts
+- `claude-remote:daemon` — Daemon startup, channel creation, JSONL watching, message batching
+
+You can filter namespaces if needed, e.g. `DEBUG=claude-remote:rc,claude-remote:pipe-client`.
+
 ## License
 
 MIT

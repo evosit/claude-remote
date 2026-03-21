@@ -9,6 +9,9 @@ import { renderBatch, COLOR } from "./discord-renderer.js";
 import { resolveJSONLPath, ID_PREFIX, capSet, truncate, extractToolResultText, extractToolResultImages, mimeToExt, isLocalCommand } from "./utils.js";
 import { getConfigDir, getPlatform } from "./platform.js";
 import type { JSONLMessage, ProcessedMessage, ContentBlock, ContentBlockToolUse, ContentBlockText, ContentBlockToolResult, DaemonToParent, ParentToDaemon } from "./types.js";
+import debug from 'debug';
+
+const d = debug('claude-remote:daemon');
 
 // Ignore SIGPIPE on non-Windows to avoid broken pipe crashes
 if (getPlatform() !== 'win32') {
@@ -100,6 +103,7 @@ process.on("message", (msg: ParentToDaemon) => {
 // ── Main startup ──
 
 async function start() {
+  d('start: initializing daemon');
   const token = process.env.DISCORD_BOT_TOKEN;
   const categoryId = process.env.DISCORD_CATEGORY_ID;
   const guildId = process.env.DISCORD_GUILD_ID;
@@ -136,10 +140,10 @@ async function start() {
     },
   });
 
-  client.on(Events.Error, (err) => console.error("[daemon] Discord error:", err));
+  client.on(Events.Error, (err) => d('Discord error: %s', err.message));
 
   await client.login(token);
-  console.log("[daemon] Discord bot logged in");
+  d('Discord bot logged in as %s', client.user?.username || 'unknown');
 
   const guild = await client.guilds.fetch(guildId);
   if (!guild) {
@@ -152,15 +156,18 @@ async function start() {
   let isContextClear = false;
   const savedChannelId = reuseChannelId || loadSessionChannel(sessionId);
   if (savedChannelId) {
+    d('attempting to reuse channel id=%s', savedChannelId);
     try {
       const existing = await guild.channels.fetch(savedChannelId);
       if (existing && existing.type === ChannelType.GuildText) {
         channel = existing as TextChannel;
         isContextClear = !!reuseChannelId;
         console.log(`[daemon] Reusing channel: #${channel.name}${isContextClear ? " (context cleared)" : ""}`);
+        d('channel reused: #%s (id=%s)', channel.name, channel.id);
       }
     } catch {
       // Channel was deleted, will create a new one
+      d('saved channel not found or invalid, will create new');
     }
   }
 
@@ -178,14 +185,17 @@ async function start() {
     }
 
     try {
+      d('creating channel: %s', channelName);
       channel = await guild.channels.create({
         name: channelName,
         type: ChannelType.GuildText,
         parent: categoryId,
         topic: `Claude Code session · ${projectDir} · ${sessionId.slice(0, 8)}`,
       }) as TextChannel;
+      d('channel created: #%s (id=%s)', channel.name, channel.id);
     } catch (err) {
       console.error("[daemon] Failed to create channel:", err);
+      d('channel creation failed: %s', err);
       process.exit(1);
     }
 
@@ -515,13 +525,18 @@ async function replayHistory() {
 // ── JSONL Watcher ──
 
 function startWatcher() {
+  d('starting watcher on %s', jsonlPath);
   watcher = chokidar.watch(jsonlPath, {
     persistent: true,
     awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
   });
 
   watcher.on("change", handleFileChange);
-  watcher.on("error", (err: unknown) => console.error("[daemon] Watcher error:", err));
+  watcher.on("error", (err: unknown) => {
+    d('watcher error: %s', String(err));
+    console.error("[daemon] Watcher error:", err);
+  });
+  d('watcher active');
   console.log("[daemon] Watching JSONL for changes");
 }
 
@@ -575,9 +590,11 @@ async function handleFileChange(filePath: string) {
 
     if (newSize <= lastFileSize) {
       await fd.close();
+      d('handleFileChange: truncation detected, ignoring');
       return;
     }
 
+    d('handleFileChange: %d new bytes', newSize - lastFileSize);
     const buf = Buffer.alloc(newSize - lastFileSize);
     await fd.read(buf, 0, buf.length, lastFileSize);
     await fd.close();
