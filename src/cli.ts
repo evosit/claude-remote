@@ -475,6 +475,9 @@ async function setup() {
     p.log.info("Existing configuration found. Press Enter to keep current values.");
   }
 
+  // Collect additional claude args early (may be used in later tasks)
+  let additionalArgs: string[] = [];
+
   // ── Prerequisites note ──
 
   p.note(
@@ -658,20 +661,12 @@ async function setup() {
     initialValue: false,
   });
 
-  let additionalArgs: string[] = [];
   if (!p.isCancel(addCustomArgs) && addCustomArgs) {
     const argsInput = await p.text({
       message: 'Enter additional arguments (space-separated):',
       placeholder: '--dangerously-skip-permissions --model stepfun/step-3.5-flash:free',
-      validate: (value) => {
+      validate: (value: string | undefined) => {
         if (!value || !value.trim()) return 'At least one argument required if enabled';
-        // Very basic validation - ensure it looks like CLI args
-        const tokens = value.trim().split(/\s+/);
-        for (const token of tokens) {
-          if (!token.startsWith('-')) {
-            return 'Each argument should start with -- or -';
-          }
-        }
         return undefined;
       },
     });
