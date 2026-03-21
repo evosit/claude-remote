@@ -18,7 +18,7 @@ When enabled, each Claude session gets its own Discord channel. Messages, tool c
 
 ## Setup
 
-You need Windows (macOS/Linux not supported yet), Node 18+, and a Discord bot.
+You need Windows or Linux (macOS may work but is untested), Node 18+, and a Discord bot.
 
 ### Creating the bot
 
@@ -35,6 +35,10 @@ claude-remote setup
 ```
 
 Setup walks you through entering your bot token, picking your server, and installing the hooks/statusline into Claude Code. It can also set up a `claude` shell alias so you don't have to type `claude-remote` every time.
+
+### Linux notes
+
+On Linux, ensure you have build tools installed (`build-essential` on Debian/Ubuntu, `dnf groupinstall "Development Tools"` on Fedora). For **Alpine Linux**, additional steps are required — see `COMPATIBILITY.md`.
 
 ## Usage
 
