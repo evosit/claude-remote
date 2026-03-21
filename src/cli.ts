@@ -559,6 +559,35 @@ async function setup() {
     guildId = selected;
   }
 
+  // ── Additional claude arguments (configs) ──
+
+  const addCustomArgs = await p.confirm({
+    message: 'Add custom CLI arguments to the claude process? (e.g., --dangerously-skip-permissions, --model stepfun/step-3.5-flash:free)',
+    initialValue: false,
+  });
+
+  if (!p.isCancel(addCustomArgs) && addCustomArgs) {
+    const argsInput = await p.text({
+      message: 'Enter additional arguments (space-separated):',
+      placeholder: '--dangerously-skip-permissions --model stepfun/step-3.5-flash:free',
+      validate: (value: string | undefined) => {
+        if (!value || !value.trim()) return 'At least one argument required if enabled';
+        return undefined;
+      },
+    });
+
+    if (!p.isCancel(argsInput)) {
+      additionalArgs = argsInput.trim().split(/\s+/).filter(Boolean);
+    }
+  }
+
+  // ── Alias setup ──
+
+  const aliasSetup = await p.confirm({
+    message: `Set up ${pc.cyan("claude")} alias? (so you type ${pc.bold("claude")} instead of ${pc.bold("claude-remote")})`,
+    initialValue: false, // default to false to avoid surprising users
+  });
+
   // ── Continue install tasks ──
 
   const CATEGORY_NAME = "Claude RC";
@@ -606,13 +635,6 @@ async function setup() {
     },
   ]);
 
-  // ── Alias setup ──
-
-  const aliasSetup = await p.confirm({
-    message: `Set up ${pc.cyan("claude")} alias? (so you type ${pc.bold("claude")} instead of ${pc.bold("claude-remote")})`,
-    initialValue: false, // default to false to avoid surprising users
-  });
-
   if (!p.isCancel(aliasSetup) && aliasSetup) {
     let targets = getAliasTargets();
 
@@ -651,28 +673,6 @@ async function setup() {
       }
 
       p.log.info(`Restart your terminal for the ${pc.cyan("claude")} alias to take effect.`);
-    }
-  }
-
-  // ── Additional claude arguments (configs) ──
-
-  const addCustomArgs = await p.confirm({
-    message: 'Add custom CLI arguments to the claude process? (e.g., --dangerously-skip-permissions, --model stepfun/step-3.5-flash:free)',
-    initialValue: false,
-  });
-
-  if (!p.isCancel(addCustomArgs) && addCustomArgs) {
-    const argsInput = await p.text({
-      message: 'Enter additional arguments (space-separated):',
-      placeholder: '--dangerously-skip-permissions --model stepfun/step-3.5-flash:free',
-      validate: (value: string | undefined) => {
-        if (!value || !value.trim()) return 'At least one argument required if enabled';
-        return undefined;
-      },
-    });
-
-    if (!p.isCancel(argsInput)) {
-      additionalArgs = argsInput.trim().split(/\s+/).filter(Boolean);
     }
   }
 
