@@ -8,6 +8,10 @@ import { which } from "which";
 import { STATUS_FLAG, PIPE_REGISTRY, safeUnlink } from "./utils.js";
 import * as platform from "./platform.js";
 import type { DaemonToParent, PipeMessage } from "./types.js";
+import dotenv from 'dotenv';
+
+// Load .env file from config directory (if present)
+dotenv.config({ path: path.join(platform.getConfigDir(), '.env') });
 
 // ── Constants ──
 
