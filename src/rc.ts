@@ -263,7 +263,10 @@ function startDaemon(channelName?: string) {
   });
 
   // Log daemon output to file for debugging
-  const logStream = fs.createWriteStream(path.join(os.homedir(), ".claude-remote", "daemon.log"), { flags: "a" });
+  const logDir = platform.getConfigDir();
+  const logPath = path.join(logDir, "daemon.log");
+  fs.mkdirSync(logDir, { recursive: true }); // ensure exists
+  const logStream = fs.createWriteStream(logPath, { flags: "a" });
   daemon.stdout?.pipe(logStream);
   daemon.stderr?.pipe(logStream);
 
