@@ -1,7 +1,14 @@
 ---
-title: Project State
-description: Current project status, position, and continuity
-type: state
+gsd_state_version: 1.0
+milestone: v2.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-21T04:20:52.017Z"
+progress:
+  total_phases: 4
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
 ---
 
 # Project State: Linux Support (v2.0)
@@ -16,21 +23,8 @@ type: state
 
 ## Current Position
 
-**Milestone**: v2.0 — Cross-platform claude-remote
-
-**Phase**: Phase 1 (Platform Abstraction) — planning complete
-
-**Status**: Execution pending (plan created, ready to run)
-
-**Progress**: ███░░░░░░░ 20%
-
-- Planning artifacts: ✓ Complete
-- Phase 1 (Platform Abstraction): ◆ Plan ready (7 tasks, 1 wave)
-- Phase 2 (Linux Shell Integration): ⬜ Not started
-- Phase 3 (Testing & Polish): ⬜ Not started
-- Phase 4 (Documentation & Release): ⬜ Not started
-
----
+Phase: 01 (platform-abstraction) — EXECUTING
+Plan: 1 of 1
 
 ## Recent Decisions
 

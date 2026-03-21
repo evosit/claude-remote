@@ -12,7 +12,7 @@
 | Phase | Name | Goal | Est. Duration | Status |
 |-------|------|------|---------------|--------|
 | 1 | Platform Abstraction | Core cross-platform infrastructure | 2-3 days | Planned |
-| 2 | Linux Shell Integration | Setup wizard installs aliases for bash/zsh/fish | 1 day | Planned |
+| 2 | 1/1 | Complete   | 2026-03-21 | Planned |
 | 3 | Testing & Polish | Validate on Linux, fix bugs, improve UX | 2-3 days | Planned |
 | 4 | Documentation & Release | Update README, write changelog, publish | 1 day | Planned |
 
