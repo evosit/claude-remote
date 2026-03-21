@@ -1,8 +1,11 @@
 {
   "name": "@hoangvu12/claude-remote",
-  "version": "1.2.0",
+  "version": "2.0.0",
   "description": "Remote Control for Claude Code - monitor and interact with Claude Code sessions from your phone",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "bin": {
     "claude-remote": "dist/cli.js",
     "remote-cmd": "dist/remote-cmd.js"
