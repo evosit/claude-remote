@@ -43,14 +43,18 @@ async function main() {
   }
 
   // No subcommand = toggle
+  if (args.length > 0) {
+    console.error("ERROR: Unexpected arguments. Use 'on [name]' to specify a channel name.");
+    process.exit(1);
+  }
   const resp = await sendPipeMessage(pipe, { type: "status" });
   if (resp?.active) {
     await sendPipeMessage(pipe, { type: "disable" });
     console.log("Discord sync disabled");
   } else {
-    const channelName = args.join(" ") || undefined;
-    await sendPipeMessage(pipe, { type: "enable", channelName });
-    console.log(`Discord sync enabled${channelName ? ` (${channelName})` : ""}`);
+    // Toggle enable: use default channel name (no custom name)
+    await sendPipeMessage(pipe, { type: "enable", channelName: undefined });
+    console.log("Discord sync enabled");
   }
 }
 

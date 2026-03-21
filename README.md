@@ -124,7 +124,7 @@ If not found, add the appropriate directory to your shell's `PATH` (e.g., in `~/
 Check that your bot has the required **Privileged Gateway Intents**:
 
 - **Message Content Intent** — must be enabled in the Discord Developer Portal
-- Bot permissions: Send Messages, Manage Channels, Read Message History, Manage Threads
+- Bot permissions: Send Messages, Manage Channels, Read Message History, Manage Threads, **Embed Links**, **Attach Files**
 
 **Socket permission errors (Linux)**
 
@@ -166,6 +166,13 @@ Once connected, you get slash commands in the channel:
 | `/queue view\|clear\|remove\|edit` | Manage queued messages |
 
 You can also just type in the channel to send messages to Claude, or attach images.
+
+**Note:** When the channel is created, a pinned message appears with usage instructions and available commands. Read it for quick reference.
+
+**Slash Autocomplete Tip:** Discord's client shows a dropdown when you type `/`. To avoid this:
+- Use `\/` to send a plain `/` (e.g., `\/usr\/bin` displays as `/usr/bin`)
+- Use code blocks for code/JSON: `` `code` `` or ```` ``` ``` ````
+- Or disable autocomplete: Settings → Text & Images → toggle "Autocomplete" off
 
 ## How it works
 

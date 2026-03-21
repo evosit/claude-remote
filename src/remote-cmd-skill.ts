@@ -129,8 +129,19 @@ async function main() {
     process.exit(0);
   }
 
-  // 'on' or any other args (default to on)
-  const channelName = subcommand === 'on' ? args.slice(1).join(' ') : args.join(' ');
+  // 'on' with optional channel name, 'off', or toggle (no args)
+  let channelName: string | undefined;
+  if (subcommand === 'on') {
+    channelName = args.slice(1).join(' ') || undefined;
+  } else if (subcommand === 'off' || subcommand === 'status') {
+    // These are handled above, but for clarity: no channel name
+  } else {
+    // Toggle mode (no subcommand) - don't use args as channel name
+    if (args.length > 0) {
+      console.error('ERROR: Unexpected arguments. Use "on [name]" to specify a channel name.');
+      process.exit(1);
+    }
+  }
   await sendPipeMessage(pipe, { type: 'enable', channelName: channelName || undefined });
   if (channelName) {
     console.log(`Discord sync enabled (${channelName})`);

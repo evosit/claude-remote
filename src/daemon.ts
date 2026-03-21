@@ -17,6 +17,16 @@ const d = debug('claude-remote:daemon');
 if (getPlatform() !== 'win32') {
   process.on('SIGPIPE', () => {});
 }
+
+// Sanitize channel name to meet Discord's requirements: lowercase alphanumeric, hyphens, underscores only
+function sanitizeChannelName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')   // Replace invalid chars with hyphen
+    .replace(/-+/g, '-')            // Collapse multiple hyphens
+    .replace(/^-|-$/g, '')          // Trim leading/trailing hyphens
+    .slice(0, 100) || 'channel';    // Enforce max length, ensure non-empty
+}
 import { DiscordProvider } from "./providers/discord.js";
 import { createPipeline } from "./create-pipeline.js";
 import type { SessionContext } from "./handler.js";
@@ -138,6 +148,8 @@ async function start() {
       ...Options.DefaultSweeperSettings,
       messages: { interval: 300, lifetime: 600 },
     },
+    // Prevent @everyone and @here from pinging everyone (set default for all messages)
+    allowedMentions: { parse: [] },
   });
 
   client.on(Events.Error, (err) => d('Discord error: %s', err.message));
@@ -175,13 +187,14 @@ async function start() {
   if (!channel) {
     let channelName: string;
     if (customChannelName) {
-      channelName = customChannelName.slice(0, 100);
+      channelName = sanitizeChannelName(customChannelName);
     } else {
       const folderName = path.basename(projectDir);
       const timestamp = new Date().toLocaleString("en-US", {
         month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false,
       }).toLowerCase().replace(/[,\s]+/g, "-");
-      channelName = `${folderName}-${timestamp}`.slice(0, 100);
+      const baseName = `${folderName}-${timestamp}`;
+      channelName = sanitizeChannelName(baseName);
     }
 
     try {
@@ -190,7 +203,7 @@ async function start() {
         name: channelName,
         type: ChannelType.GuildText,
         parent: categoryId,
-        topic: `Claude Code session · ${projectDir} · ${sessionId.slice(0, 8)}`,
+        topic: `🤖 Claude Code remote · ${projectDir} · Tip: type \\/ to avoid slash commands, or disable autocomplete in Discord settings`,
       }) as TextChannel;
       d('channel created: #%s (id=%s)', channel.name, channel.id);
     } catch (err) {
@@ -261,7 +274,7 @@ async function start() {
             const buf = Buffer.from(await resp.arrayBuffer());
             const ext = att.filename.split(".").pop() || "png";
             const tmpPath = path.join(os.tmpdir(), `claude-remote-${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`);
-            fs.writeFileSync(tmpPath, buf);
+            fs.writeFileSync(tmpPath, buf, { mode: 0o600 }); // Restrictive permissions
             tempFiles.add(tmpPath);
             paths.push(tmpPath);
           } catch (err) {

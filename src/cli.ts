@@ -122,7 +122,6 @@ function installHooksAndStatusline() {
   const skillContent = `---
 name: remote
 description: Toggle remote control sync for this session
-disable-model-invocation: true
 allowed-tools: Bash
 ---
 
@@ -411,8 +410,13 @@ function ensureCmdShimInPath(shimDir: string): void {
       { encoding: "utf-8", stdio: ["pipe", "pipe", "ignore"] }
     ).trim();
     if (!userPath.toLowerCase().includes(shimDir.toLowerCase())) {
+      // Use PowerShell -EncodedCommand to safely pass paths with special characters
+      // PowerShell expects base64-encoded UTF-16LE (Unicode) for -EncodedCommand
+      const newPath = `${userPath};${shimDir}`;
+      const script = `[Environment]::SetEnvironmentVariable('PATH', '${newPath.replace(/'/g, "''")}', 'User')`;
+      const encoded = Buffer.from(script, 'utf-16le').toString('base64');
       execSync(
-        `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('PATH', '${userPath};${shimDir}', 'User')"`,
+        `powershell -NoProfile -EncodedCommand ${encoded}`,
         { stdio: "ignore" }
       );
     }
@@ -712,7 +716,12 @@ async function uninstall() {
     process.exit(0);
   }
 
-  await tasks([
+  const uninstallNpm = await p.confirm({
+    message: "Also uninstall the npm package (@hoangvu12/claude-remote)?",
+    initialValue: false,
+  });
+
+  const uninstallTasks = [
     {
       title: "Removing /remote skill, hooks & statusline",
       task: async () => {
@@ -741,14 +750,43 @@ async function uninstall() {
         return "Configuration removed";
       },
     },
-  ]);
+  ];
 
-  p.note(
-    `You can also run: ${pc.bold("npm uninstall -g @hoangvu12/claude-remote")}`,
-    "Optional cleanup"
-  );
+  // Add npm uninstall task if user opted in
+  if (!p.isCancel(uninstallNpm) && uninstallNpm) {
+    uninstallTasks.push({
+      title: "Uninstalling npm package",
+      task: async () => {
+        try {
+          execSync(`npm uninstall -g ${PKG_NAME}`, {
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+          return "npm package removed";
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("EACCES") || msg.includes("permission")) {
+            throw new Error(`Permission denied. Try: sudo npm uninstall -g ${PKG_NAME}`);
+          } else if (msg.includes("not found") || msg.includes("ENOENT")) {
+            throw new Error("Package not found (may have been already removed)");
+          } else {
+            throw new Error(`Uninstall failed: ${msg}`);
+          }
+        }
+      },
+    });
+  }
 
-  p.outro(pc.green("Uninstalled successfully."));
+  await tasks(uninstallTasks);
+
+  if (!p.isCancel(uninstallNpm) || uninstallNpm) {
+    p.outro(pc.green("Uninstalled successfully."));
+  } else {
+    p.note(
+      `You can also run: ${pc.bold("npm uninstall -g @hoangvu12/claude-remote")}`,
+      "Optional cleanup"
+    );
+    p.outro(pc.green("Uninstalled successfully (npm package retained)."));
+  }
 }
 
 // ── Auto-update ──

@@ -186,6 +186,14 @@ function startPipeServer() {
 
   pipeServer.listen(PIPE_PATH, () => {
     d('pipeServer listening on %s', PIPE_PATH);
+    // Set restrictive permissions on the socket (owner read/write only)
+    if (platform.shouldCleanupSocket()) {
+      try {
+        fs.chmodSync(PIPE_PATH, 0o600);
+      } catch (err) {
+        console.error(`[rc] Failed to set socket permissions: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
     registerPipe();
   });
 }
