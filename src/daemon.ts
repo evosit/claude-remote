@@ -944,9 +944,22 @@ function saveSessionChannel(sid: string, channelId: string): void {
       data = JSON.parse(fs.readFileSync(SESSIONS_FILE, "utf-8"));
     } catch { /* fresh file */ }
     data[sid] = channelId;
-    fs.mkdirSync(path.dirname(SESSIONS_FILE), { recursive: true });
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2) + "\n");
-  } catch { /* best effort */ }
+    const sessionsDir = path.dirname(SESSIONS_FILE);
+    try {
+      fs.mkdirSync(sessionsDir, { recursive: true });
+    } catch (err) {
+      console.error(`[daemon] Failed to create sessions directory ${sessionsDir}: ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
+    try {
+      fs.writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2) + "\n");
+    } catch (err) {
+      console.error(`[daemon] Failed to write sessions file ${SESSIONS_FILE}: ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
+  } catch (err) {
+    console.error(`[daemon] Failed to save session mapping: ${err instanceof Error ? err.message : err}`);
+  }
 }
 
 // ── Hot-reload ──

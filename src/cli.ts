@@ -49,8 +49,18 @@ export function loadConfig(): Config | null {
 }
 
 function saveConfig(config: Config) {
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + "\n");
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  } catch (err) {
+    console.error(`[cli] Failed to create config directory at ${CONFIG_DIR}: ${err instanceof Error ? err.message : err}`);
+    throw err;
+  }
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + "\n");
+  } catch (err) {
+    console.error(`[cli] Failed to write config file to ${CONFIG_FILE}: ${err instanceof Error ? err.message : err}`);
+    throw err;
+  }
 }
 
 function getClaudeSettingsPath(): string {
@@ -334,8 +344,18 @@ function getAliasTargets(): AliasTarget[] {
 function installAlias(target: AliasTarget): void {
   if (target.shell === "cmd") {
     const shimDir = path.dirname(target.profilePath);
-    fs.mkdirSync(shimDir, { recursive: true });
-    fs.writeFileSync(target.profilePath, target.aliasLine + "\n");
+    try {
+      fs.mkdirSync(shimDir, { recursive: true });
+    } catch (err) {
+      console.error(`[cli] Failed to create shim directory ${shimDir}: ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
+    try {
+      fs.writeFileSync(target.profilePath, target.aliasLine + "\n");
+    } catch (err) {
+      console.error(`[cli] Failed to write shim file ${target.profilePath}: ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
     ensureCmdShimInPath(shimDir);
     return;
   }
@@ -348,8 +368,19 @@ function installAlias(target: AliasTarget): void {
 
   if (content.includes(ALIAS_MARKER)) return;
 
-  fs.mkdirSync(path.dirname(target.profilePath), { recursive: true });
-  fs.appendFileSync(target.profilePath, "\n" + target.aliasLine + "\n");
+  const profileDir = path.dirname(target.profilePath);
+  try {
+    fs.mkdirSync(profileDir, { recursive: true });
+  } catch (err) {
+    console.error(`[cli] Failed to create profile directory ${profileDir}: ${err instanceof Error ? err.message : err}`);
+    throw err;
+  }
+  try {
+    fs.appendFileSync(target.profilePath, "\n" + target.aliasLine + "\n");
+  } catch (err) {
+    console.error(`[cli] Failed to append to ${target.profilePath}: ${err instanceof Error ? err.message : err}`);
+    throw err;
+  }
 }
 
 function uninstallAlias(target: AliasTarget): void {

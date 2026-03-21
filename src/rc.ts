@@ -197,8 +197,18 @@ function cleanupPipeServer() {
 
 function setStatusFlag(active: boolean) {
   if (active) {
-    fs.mkdirSync(path.dirname(STATUS_FLAG), { recursive: true });
-    fs.writeFileSync(STATUS_FLAG, String(process.pid));
+    try {
+      fs.mkdirSync(path.dirname(STATUS_FLAG), { recursive: true });
+    } catch (err) {
+      console.error(`[rc] Failed to create status directory: ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
+    try {
+      fs.writeFileSync(STATUS_FLAG, String(process.pid));
+    } catch (err) {
+      console.error(`[rc] Failed to write status flag to ${STATUS_FLAG}: ${err instanceof Error ? err.message : err}`);
+      throw err;
+    }
   } else {
     safeUnlink(STATUS_FLAG);
   }
