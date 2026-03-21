@@ -73,12 +73,17 @@ if (!claudePath) {
   process.exit(1);
 }
 
+const env = { ...process.env } as Record<string, string>;
+env.LANG = process.env.LANG || 'C.UTF-8';
+env.LC_ALL = process.env.LC_ALL || 'C.UTF-8';
+d('spawning PTY with LANG=%s, LC_ALL=%s', env.LANG, env.LC_ALL);
+
 const proc = pty.spawn(CLAUDE_BIN, process.argv.slice(2), {
   name: "xterm-color",
   cols: process.stdout.columns || 120,
   rows: process.stdout.rows || 30,
   cwd: projectDir,
-  env: process.env as Record<string, string>,
+  env,
 });
 
 proc.onData((data) => {

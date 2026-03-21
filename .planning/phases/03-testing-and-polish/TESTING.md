@@ -158,6 +158,22 @@ claude-remote uninstall
 
 ---
 
+### TC6: Unicode / Emoji Display
+```bash
+claude-remote -p "List some emojis: 😀 😁 😂 🤣 🎉 🚀"
+```
+**Steps:**
+1. Run command with a prompt that will cause Claude to use emojis in its response
+2. Observe terminal output — emojis should render correctly, not as boxes or question marks
+3. Check Discord message — emojis should appear correctly in Discord as well
+
+**Expected:**
+- Terminal displays emojis properly (UTF-8 capable)
+- Discord receives and displays emojis correctly
+- No garbled characters or encoding errors
+
+---
+
 ## Expected Observations
 
 During all tests, monitor for:
