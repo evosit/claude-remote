@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getConfigDir } from "./platform.js";
-import { STATUS_FLAG } from "./utils.js";
+import { STATUS_FLAG, getPackageRoot } from "./utils.js";
 
 const CONFIG_DIR = getConfigDir();
 
@@ -71,9 +71,12 @@ process.stdin.on("end", () => {
   // Check for available update
   try {
     const cache = JSON.parse(fs.readFileSync(path.join(CONFIG_DIR, "update-check.json"), "utf-8")) as { latestVersion?: string };
-    const pkg = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, "../package.json"), "utf-8")) as { version?: string };
-    if (cache.latestVersion && pkg.version && cache.latestVersion !== pkg.version) {
-      parts.push(`\x1b[33m↑ ${cache.latestVersion}\x1b[0m`);
+    const packageRoot = getPackageRoot();
+    if (packageRoot) {
+      const pkg = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8")) as { version?: string };
+      if (cache.latestVersion && pkg.version && cache.latestVersion !== pkg.version) {
+        parts.push(`\x1b[33m↑ ${cache.latestVersion}\x1b[0m`);
+      }
     }
   } catch { /* no cache or no update */ }
 

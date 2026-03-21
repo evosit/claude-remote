@@ -24,11 +24,15 @@ async function main() {
   let payload: { session_id?: string; transcript_path?: string; cwd?: string };
   try {
     payload = JSON.parse(input);
-  } catch {
+  } catch (err) {
+    process.stderr.write(`[session-hook] Invalid JSON: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(0);
   }
 
-  if (!payload.session_id || !payload.transcript_path) process.exit(0);
+  if (!payload.session_id || !payload.transcript_path) {
+    process.stderr.write("[session-hook] Missing required fields (session_id, transcript_path)\n");
+    process.exit(0);
+  }
 
   try {
     await sendPipeMessage(pipeName, {
@@ -37,9 +41,13 @@ async function main() {
       transcriptPath: payload.transcript_path,
       cwd: payload.cwd,
     });
-  } catch {
-    // best effort — pipe might not be ready yet
+  } catch (err) {
+    // Best effort — pipe might not be ready yet, but log for debugging
+    process.stderr.write(`[session-hook] Failed to send session-register: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 }
 
-main().catch(() => process.exit(0));
+main().catch((err) => {
+  process.stderr.write(`[session-hook] Unexpected error: ${err instanceof Error ? err.message : String(err)}\n`);
+  process.exit(0);
+});

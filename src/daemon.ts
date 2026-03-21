@@ -6,7 +6,7 @@ import path from "node:path";
 import os from "node:os";
 import { parseJSONLString, processAssistantBlocks, processUserBlocks, processNonConversation, walkCurrentBranch, getToolInputPreview } from "./jsonl-parser.js";
 import { renderBatch, COLOR } from "./discord-renderer.js";
-import { resolveJSONLPath, ID_PREFIX, capSet, truncate, extractToolResultText, extractToolResultImages, mimeToExt, isLocalCommand } from "./utils.js";
+import { resolveJSONLPath, ID_PREFIX, capSet, truncate, extractToolResultText, extractToolResultImages, mimeToExt, isLocalCommand, getInstalledPath } from "./utils.js";
 import { getConfigDir, getPlatform } from "./platform.js";
 import type { JSONLMessage, ProcessedMessage, ContentBlock, ContentBlockToolUse, ContentBlockText, ContentBlockToolResult, DaemonToParent, ParentToDaemon } from "./types.js";
 import debug from 'debug';
@@ -966,7 +966,7 @@ function saveSessionChannel(sid: string, channelId: string): void {
 
 const RELOAD_EXIT_CODE = 42;
 
-const DAEMON_JS_PATH = path.resolve(import.meta.dirname, "daemon.js");
+const DAEMON_JS_PATH = getInstalledPath("daemon");
 fs.watchFile(DAEMON_JS_PATH, { interval: 1000 }, (curr, prev) => {
   if (curr.mtimeMs === prev.mtimeMs) return;
   console.log("[daemon] Code changed, exiting for reload...");

@@ -9,6 +9,7 @@ import { execSync } from "node:child_process";
 import { createRequire } from "node:module";
 import * as platform from "./platform.js";
 import type { Config } from "./types.js";
+import { getInstalledPath } from "./utils.js";
 
 const CONFIG_DIR = platform.getConfigDir();
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
@@ -72,21 +73,25 @@ function getSkillDir(): string {
 }
 
 function getStatuslineCommand(): string {
-  const scriptPath = path.resolve(import.meta.dirname, "statusline.js");
-  return `node "${scriptPath}"`;
+  return `node "${getInstalledPath("statusline")}"`;
 }
 
 // ── Skill & statusline management ──
 
-const HOOK_EVENT_TYPES = ["UserPromptSubmit", "SessionStart", "Stop", "PostCompact"];
+const HOOK_EVENT_TYPES = ["UserPromptSubmit", "SessionStart", "Stop"];
 const HOOK_SCRIPT_NAMES = ["discord-hook", "session-hook", "state-hook"];
 
 function isOurHook(h: Record<string, string>): boolean {
   return HOOK_SCRIPT_NAMES.some((name) => h.command?.includes(name));
 }
 
-function cleanRemoteHooks(hooks: Record<string, unknown[]>) {
-  for (const eventType of HOOK_EVENT_TYPES) {
+/**
+ * Remove ALL claude-remote hooks from the settings.hooks object,
+ * regardless of which event they are registered under.
+ * This ensures clean reinstall even if old hooks were in unexpected events.
+ */
+function removeAllRemoteHooks(hooks: Record<string, unknown[]>) {
+  for (const eventType of Object.keys(hooks)) {
     if (Array.isArray(hooks[eventType])) {
       hooks[eventType] = hooks[eventType].filter((entry: unknown) => {
         const e = entry as Record<string, unknown>;
@@ -99,8 +104,7 @@ function cleanRemoteHooks(hooks: Record<string, unknown[]>) {
 }
 
 function getHookCommand(scriptName: string): string {
-  const scriptPath = path.resolve(import.meta.dirname, `${scriptName}.js`);
-  return `node "${scriptPath}"`;
+  return `node "${getInstalledPath(scriptName)}"`;
 }
 
 function installHooksAndStatusline() {
@@ -108,14 +112,16 @@ function installHooksAndStatusline() {
   const oldSkillDir = path.join(os.homedir(), ".claude", "skills", "discord");
   fs.rmSync(oldSkillDir, { recursive: true, force: true });
 
-  // Install /remote skill (uses Haiku for speed)
+  // Install /remote skill (model not specified to avoid conflicts; uses default)
   const skillDir = getSkillDir();
   fs.mkdirSync(skillDir, { recursive: true });
+
+  // Use absolute path to remote-cmd.js to avoid PATH lookup issues
+  const remoteCmdPath = getInstalledPath("remote-cmd");
 
   const skillContent = `---
 name: remote
 description: Toggle remote control sync for this session
-model: haiku
 disable-model-invocation: true
 allowed-tools: Bash
 ---
@@ -123,7 +129,7 @@ allowed-tools: Bash
 Run the remote-cmd CLI to toggle/control remote sync. Pass through any arguments the user provided.
 
 \`\`\`bash
-remote-cmd $ARGUMENTS
+node "${remoteCmdPath}" $ARGUMENTS
 \`\`\`
 
 Print the output to the user. Do not add any extra commentary.
@@ -148,8 +154,8 @@ Print the output to the user. Do not add any extra commentary.
   // Build hooks — clean any existing claude-remote hooks first, then add ours
   const hooks = (settings.hooks || {}) as Record<string, unknown[]>;
 
-  // Clean old claude-remote hooks from all event types
-  cleanRemoteHooks(hooks);
+  // Clean old claude-remote hooks from ALL event types (comprehensive cleanup)
+  removeAllRemoteHooks(hooks);
 
   // Add SessionStart hook — registers session info with rc.ts
   if (!hooks.SessionStart) hooks.SessionStart = [];
@@ -165,11 +171,11 @@ Print the output to the user. Do not add any extra commentary.
     hooks: [{ type: "command", command: getHookCommand("state-hook"), timeout: 5000 }],
   });
 
-  // Add PostCompact hook — idle signal after manual /compact
-  if (!hooks.PostCompact) hooks.PostCompact = [];
-  hooks.PostCompact.push({
+  // Add UserPromptSubmit hook — intercepts /discord commands before Claude sees them
+  if (!hooks.UserPromptSubmit) hooks.UserPromptSubmit = [];
+  hooks.UserPromptSubmit.push({
     matcher: "",
-    hooks: [{ type: "command", command: getHookCommand("state-hook"), timeout: 5000 }],
+    hooks: [{ type: "command", command: getHookCommand("discord-hook"), timeout: 5000 }],
   });
 
   settings.hooks = hooks;
@@ -204,7 +210,7 @@ function uninstallHooksAndStatusline() {
   // Remove claude-remote hooks
   const hooks = settings.hooks as Record<string, unknown[]> | undefined;
   if (hooks) {
-    cleanRemoteHooks(hooks);
+    removeAllRemoteHooks(hooks);
     if (Object.keys(hooks).length === 0) delete settings.hooks;
   }
 
@@ -575,7 +581,15 @@ async function setup() {
     {
       title: "Saving configuration",
       task: async () => {
-        saveConfig({ discordBotToken: finalToken, guildId, categoryId });
+        const config: Config = {
+          discordBotToken: finalToken,
+          guildId,
+          categoryId,
+        };
+        if (additionalArgs.length > 0) {
+          config.additionalClaudeArgs = additionalArgs;
+        }
+        saveConfig(config);
         return `Saved to ${pc.dim(CONFIG_FILE)}`;
       },
     },
@@ -593,7 +607,7 @@ async function setup() {
 
   const aliasSetup = await p.confirm({
     message: `Set up ${pc.cyan("claude")} alias? (so you type ${pc.bold("claude")} instead of ${pc.bold("claude-remote")})`,
-    initialValue: true,
+    initialValue: false, // default to false to avoid surprising users
   });
 
   if (!p.isCancel(aliasSetup) && aliasSetup) {
@@ -634,6 +648,36 @@ async function setup() {
       }
 
       p.log.info(`Restart your terminal for the ${pc.cyan("claude")} alias to take effect.`);
+    }
+  }
+
+  // ── Additional claude arguments (configs) ──
+
+  const addCustomArgs = await p.confirm({
+    message: 'Add custom CLI arguments to the claude process? (e.g., --dangerously-skip-permissions, --model stepfun/step-3.5-flash:free)',
+    initialValue: false,
+  });
+
+  let additionalArgs: string[] = [];
+  if (!p.isCancel(addCustomArgs) && addCustomArgs) {
+    const argsInput = await p.text({
+      message: 'Enter additional arguments (space-separated):',
+      placeholder: '--dangerously-skip-permissions --model stepfun/step-3.5-flash:free',
+      validate: (value) => {
+        if (!value || !value.trim()) return 'At least one argument required if enabled';
+        // Very basic validation - ensure it looks like CLI args
+        const tokens = value.trim().split(/\s+/);
+        for (const token of tokens) {
+          if (!token.startsWith('-')) {
+            return 'Each argument should start with -- or -';
+          }
+        }
+        return undefined;
+      },
+    });
+
+    if (!p.isCancel(argsInput)) {
+      additionalArgs = argsInput.trim().split(/\s+/).filter(Boolean);
     }
   }
 
@@ -835,12 +879,18 @@ async function selfUpdate() {
 }
 
 async function run() {
-  const config = loadConfig();
+  let config = loadConfig();
   if (!config) {
+    // First-run auto-setup: launch interactive configuration wizard
     p.intro(pc.bgYellow(pc.black(" claude-remote ")));
-    p.log.error("Not set up yet. Run " + pc.bold("claude-remote setup") + " first.");
-    p.outro("");
-    process.exit(1);
+    p.log.info("First run detected — let's set things up!");
+    await setup();
+    // After setup, config should exist; reload
+    config = loadConfig();
+    if (!config) {
+      // Setup was cancelled or failed
+      process.exit(1);
+    }
   }
 
   process.env.DISCORD_BOT_TOKEN = config.discordBotToken;

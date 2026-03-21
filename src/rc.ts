@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { fork, type ChildProcess } from "node:child_process";
 import which from "which";
-import { STATUS_FLAG, PIPE_REGISTRY, safeUnlink } from "./utils.js";
+import { STATUS_FLAG, PIPE_REGISTRY, safeUnlink, getInstalledPath } from "./utils.js";
 import * as platform from "./platform.js";
 import type { DaemonToParent, PipeMessage } from "./types.js";
 import dotenv from 'dotenv';
@@ -25,7 +25,21 @@ d('PIPE_PATH=%s, CLAUDE_BIN=%s', PIPE_PATH, CLAUDE_BIN);
 // ── State ──
 
 const cliArgs = process.argv.slice(2);
-const initialPermissionMode = cliArgs.includes("--dangerously-skip-permissions") ? "bypassPermissions" : "default";
+
+// Load config to get additional claude arguments
+let additionalClaudeArgs: string[] = [];
+try {
+  const configPath = path.join(platform.getConfigDir(), "config.json");
+  const configContent = fs.readFileSync(configPath, "utf-8");
+  const config = JSON.parse(configContent) as { additionalClaudeArgs?: string[] };
+  additionalClaudeArgs = config.additionalClaudeArgs || [];
+} catch {
+  // Config might not exist if running outside normal setup; that's okay
+}
+
+// Combine configured additional args with command-line args (config args first)
+const claudeArgs = [...additionalClaudeArgs, ...cliArgs];
+const initialPermissionMode = claudeArgs.includes("--dangerously-skip-permissions") ? "bypassPermissions" : "default";
 
 let daemon: ChildProcess | null = null;
 let sessionId: string | null = null;
@@ -78,7 +92,7 @@ env.LANG = process.env.LANG || 'C.UTF-8';
 env.LC_ALL = process.env.LC_ALL || 'C.UTF-8';
 d('spawning PTY with LANG=%s, LC_ALL=%s', env.LANG, env.LC_ALL);
 
-const proc = pty.spawn(CLAUDE_BIN, process.argv.slice(2), {
+const proc = pty.spawn(CLAUDE_BIN, claudeArgs, {
   name: "xterm-color",
   cols: process.stdout.columns || 120,
   rows: process.stdout.rows || 30,
@@ -147,7 +161,12 @@ function startPipeServer() {
           if (daemon) daemon.send({ type: "state-signal", event: msg.event, trigger: msg.trigger });
           socket.write(JSON.stringify({ status: "ok" }));
         } else if (msg.type === "status") {
-          socket.write(JSON.stringify({ status: "ok", active: daemon !== null }));
+          const isActive = daemon !== null;
+          const response: Record<string, unknown> = { status: "ok", active: isActive };
+          if (isActive && lastChannelName) {
+            response.channelName = lastChannelName;
+          }
+          socket.write(JSON.stringify(response));
         }
       } catch {
         socket.write(JSON.stringify({ status: "error" }));
@@ -231,7 +250,7 @@ function startDaemon(channelName?: string) {
 
   if (!sessionId) return;
 
-  const daemonPath = path.resolve(import.meta.dirname, "daemon.js");
+  const daemonPath = getInstalledPath("daemon");
 
   daemon = fork(daemonPath, [], {
     env: {

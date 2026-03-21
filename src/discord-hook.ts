@@ -6,7 +6,8 @@
 import { findPipe, sendPipeMessage } from "./pipe-client.js";
 
 interface HookInput {
-  session_id: string;
+  session_id?: string;  // snake_case (from some Claude Code versions)
+  sessionId?: string;   // camelCase (from our SessionStart hook)
   hook_event_name: string;
   prompt: string;
 }
@@ -53,7 +54,9 @@ async function main() {
   }
 
   if (action === "enable") {
-    await sendPipeMessage(pipe, { type: "enable", sessionId: input.session_id, channelName });
+    // Accept both session_id (snake_case) and sessionId (camelCase)
+    const sessionId = input.session_id || input.sessionId;
+    await sendPipeMessage(pipe, { type: "enable", sessionId, channelName });
     process.stderr.write(`Discord sync enabled${channelName ? ` (${channelName})` : ""}\n`);
   } else {
     await sendPipeMessage(pipe, { type: "disable" });

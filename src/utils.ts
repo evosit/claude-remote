@@ -136,3 +136,47 @@ export function safeUnlink(filePath: string): void {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
   }
 }
+
+// ── Package installation path resolution ──
+
+/**
+ * Walk up from startDir to find package.json with matching name.
+ * Returns the package root directory, or null if not found.
+ */
+export function getPackageRoot(startDir: string = import.meta.dirname): string | null {
+  let current = startDir;
+  const pkgName = "@hoangvu12/claude-remote";
+
+  while (current !== path.parse(current).root) {
+    try {
+      const pkgPath = path.join(current, "package.json");
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+        if (pkg.name === pkgName) {
+          return current;
+        }
+      }
+    } catch {
+      // ignore and continue walking up
+    }
+    current = path.dirname(current);
+  }
+  return null;
+}
+
+/**
+ * Get absolute path to a script in the installed package's dist directory.
+ * Works whether running from development source or installed package.
+ *
+ * @param scriptName - Name of the script (e.g., "remote-cmd", "discord-hook")
+ * @returns Absolute path to the .js file in dist/
+ */
+export function getInstalledPath(scriptName: string): string {
+  const packageRoot = getPackageRoot();
+  if (!packageRoot) {
+    throw new Error("Could not locate package root (missing package.json)");
+  }
+  // Ensure .js extension
+  const name = scriptName.endsWith(".js") ? scriptName : `${scriptName}.js`;
+  return path.join(packageRoot, "dist", name);
+}

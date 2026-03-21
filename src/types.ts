@@ -67,6 +67,8 @@ export interface Config {
   discordBotToken: string;
   guildId: string;
   categoryId: string;
+  /** Additional CLI arguments to pass to the claude process (e.g., ["--dangerously-skip-permissions", "--model", "stepfun/step-3.5-flash:free"]) */
+  additionalClaudeArgs?: string[];
 }
 
 // ── IPC messages ──
