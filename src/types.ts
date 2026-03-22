@@ -127,7 +127,25 @@ export interface PipeStateSignalMessage {
   trigger?: "manual" | "auto";
 }
 
-export type PipeMessage = PipeEnableMessage | PipeDisableMessage | PipeStatusMessage | PipeSessionRegisterMessage | PipeStateSignalMessage;
+export interface PipeCheckApprovedMessage {
+  type: "check-approved";
+  userId: string;
+}
+
+export interface PipeVerifyApprovalCodeMessage {
+  type: "verify-approval-code";
+  code: string;
+  userId: string;
+}
+
+export type PipeMessage =
+  | PipeEnableMessage
+  | PipeDisableMessage
+  | PipeStatusMessage
+  | PipeSessionRegisterMessage
+  | PipeStateSignalMessage
+  | PipeCheckApprovedMessage
+  | PipeVerifyApprovalCodeMessage;
 
 // ── Processed message for Discord rendering ──
 

@@ -10,6 +10,7 @@ import * as platform from "./platform.js";
 import type { DaemonToParent, PipeMessage } from "./types.js";
 import dotenv from 'dotenv';
 import debug from 'debug';
+import { ApprovalManager } from './approval-manager.js';
 
 const d = debug('claude-remote:rc');
 
@@ -48,6 +49,7 @@ let transcriptPath: string | null = null;
 let projectDir = process.cwd();
 let daemonWasEnabled = false;
 let lastChannelId: string | null = null;
+let approvalManager: ApprovalManager | null = null;
 
 // ── Terminal restore (Windows ConPTY leaves win32-input-mode enabled) ──
 
@@ -141,6 +143,24 @@ function startPipeServer() {
           transcriptPath = msg.transcriptPath;
           if (msg.cwd) projectDir = msg.cwd;
 
+          // Initialize ApprovalManager for this session
+          if (!approvalManager) {
+            approvalManager = new ApprovalManager(sessionId);
+            // Generate and display the initial pairing code
+            const code = approvalManager.generateCode();
+            console.log('\n=== Discord Remote Control Authorization ===');
+            console.log('To control this session from Discord, enter this code:');
+            console.log(`  ${code}`);
+            console.log('This code expires in 60 seconds and is single-use.\n');
+          } else {
+            // Session switching (e.g., after /clear) – reset approval
+            approvalManager = new ApprovalManager(sessionId);
+            const code = approvalManager.generateCode();
+            console.log('\n=== Discord Remote Control Authorization ===');
+            console.log('Enter this code in Discord to control the new session:');
+            console.log(`  ${code}\n`);
+          }
+
           d('session-registered: sid=%s, cwd=%s', sessionId, projectDir);
 
           // If daemon was running on a different session, restart it
@@ -168,6 +188,41 @@ function startPipeServer() {
             response.channelName = lastChannelName;
           }
           socket.write(JSON.stringify(response));
+        } else if (msg.type === "check-approved") {
+          // Verify if a Discord user is authorized for the current session
+          const { userId } = msg as { userId: string };
+          let approved = false;
+          if (approvalManager) {
+            approved = approvalManager.isApproved(userId);
+          }
+          socket.write(JSON.stringify({ status: "ok", approved }));
+        } else if (msg.type === "verify-approval-code") {
+          // Verify the pairing code and approve the user if valid
+          if (!approvalManager) {
+            socket.write(JSON.stringify({ status: "error", error: "No approval manager initialized" }));
+            return;
+          }
+          const { code, userId } = msg as { code: string; userId: string };
+          if (typeof code !== 'string' || typeof userId !== 'string') {
+            socket.write(JSON.stringify({ status: "error", error: "Invalid request" }));
+            return;
+          }
+          const valid = approvalManager.verifyCode(code);
+          if (valid) {
+            approvalManager.approveUser(userId);
+            socket.write(JSON.stringify({ status: "ok", approved: true }));
+          } else {
+            const remaining = approvalManager.getRemainingAttempts();
+            const blockMs = approvalManager.getBlockRemainingMs();
+            socket.write(JSON.stringify({
+              status: "ok",
+              approved: false,
+              error: "Invalid or expired code",
+              remainingAttempts: remaining,
+              blocked: blockMs > 0,
+              blockRemainingMs: blockMs,
+            }));
+          }
         }
       } catch {
         socket.write(JSON.stringify({ status: "error" }));
@@ -267,6 +322,7 @@ function startDaemon(channelName?: string) {
       DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN || "",
       DISCORD_GUILD_ID: process.env.DISCORD_GUILD_ID || "",
       DISCORD_CATEGORY_ID: process.env.DISCORD_CATEGORY_ID || "",
+      CLAUDE_REMOTE_PIPE: PIPE_PATH,
     },
     stdio: ["pipe", "pipe", "pipe", "ipc"],
   });

@@ -145,7 +145,7 @@ export function safeUnlink(filePath: string): void {
  */
 export function getPackageRoot(startDir: string = import.meta.dirname): string | null {
   let current = startDir;
-  const pkgName = "@hoangvu12/claude-remote";
+  const pkgName = "@dacineu/claude-remote";
 
   while (current !== path.parse(current).root) {
     try {

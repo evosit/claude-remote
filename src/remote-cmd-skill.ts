@@ -22,7 +22,7 @@ function findPackageRoot(startDir: string): string | null {
     try {
       if (fs.existsSync(path.join(current, 'package.json'))) {
         const pkg = JSON.parse(fs.readFileSync(path.join(current, 'package.json'), 'utf-8'));
-        if (pkg.name === '@hoangvu12/claude-remote') {
+        if (pkg.name === '@dacineu/claude-remote') {
           return current;
         }
       }

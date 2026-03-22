@@ -717,7 +717,7 @@ async function uninstall() {
   }
 
   const uninstallNpm = await p.confirm({
-    message: "Also uninstall the npm package (@hoangvu12/claude-remote)?",
+    message: "Also uninstall the npm package (@dacineu/claude-remote)?",
     initialValue: false,
   });
 
@@ -782,7 +782,7 @@ async function uninstall() {
     p.outro(pc.green("Uninstalled successfully."));
   } else {
     p.note(
-      `You can also run: ${pc.bold("npm uninstall -g @hoangvu12/claude-remote")}`,
+      `You can also run: ${pc.bold("npm uninstall -g @dacineu/claude-remote")}`,
       "Optional cleanup"
     );
     p.outro(pc.green("Uninstalled successfully (npm package retained)."));
