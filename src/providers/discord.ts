@@ -16,6 +16,7 @@ import {
   type MessageCreateOptions,
   type MessageComponentInteraction,
 } from "discord.js";
+import { sendPipeMessage } from "../pipe-client.js";
 import type {
   OutputProvider,
   ThreadCapable,
@@ -151,7 +152,7 @@ export class DiscordProvider implements OutputProvider, ThreadCapable, InputCapa
 
   // ── Discord message → provider callback ──
 
-  private handleMessage(message: Message) {
+  private async handleMessage(message: Message) {
     if (message.author.bot) return;
     if (message.channel.id !== this.channel.id) return;
     const text = message.content.trim();
@@ -167,6 +168,28 @@ export class DiscordProvider implements OutputProvider, ThreadCapable, InputCapa
     }
 
     if (!text && attachments.length === 0) return;
+
+    // Authorization check: verify the Discord user is approved
+    const pipe = process.env.CLAUDE_REMOTE_PIPE;
+    if (pipe) {
+      try {
+        const resp = await sendPipeMessage(pipe, { type: "check-approved", userId: message.author.id });
+        if (resp?.approved !== true) {
+          // Silently ignore unauthorized attempts; optionally log
+          console.log(`[daemon] Unauthorized message from ${message.author.tag} (${message.author.id})`);
+          return;
+        }
+      } catch (err) {
+        console.error("[daemon] Auth check failed:", err);
+        // On auth check failure, block the message for safety
+        return;
+      }
+    } else {
+      // No pipe connection (should not happen in normal operation)
+      console.warn("[daemon] No CLAUDE_REMOTE_PIPE set, blocking user message");
+      return;
+    }
+
     this.userMessageCb?.(text, attachments.length > 0 ? attachments : undefined);
   }
 
