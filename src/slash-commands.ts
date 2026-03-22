@@ -14,6 +14,7 @@ import type { DaemonToParent } from "./types.js";
 import { ActivityManager, STATUS_LABELS, type ActivityState } from "./activity.js";
 import { modeShiftTabCount, MODE_LABELS, ID_PREFIX } from "./utils.js";
 import { COLOR } from "./discord-renderer.js";
+import { sendPipeMessage } from "./pipe-client.js";
 
 export interface SlashCommandDeps {
   getCtx: () => SessionContext | null;
@@ -25,12 +26,47 @@ export interface SlashCommandDeps {
   channelId: string;
 }
 
+// Helper: check if a Discord user is approved for this session
+async function isApprovedUser(userId: string): Promise<boolean> {
+  const pipe = process.env.CLAUDE_REMOTE_PIPE;
+  if (!pipe) return false;
+  try {
+    const resp = await sendPipeMessage(pipe, { type: 'check-approved', userId });
+    return resp?.approved === true;
+  } catch {
+    return false;
+  }
+}
+
+// Helper: verify pairing code and approve user
+async function verifyCode(userId: string, code: string): Promise<{ ok: boolean; error?: string }> {
+  const pipe = process.env.CLAUDE_REMOTE_PIPE;
+  if (!pipe) return { ok: false, error: 'No connection to parent' };
+  const resp = await sendPipeMessage(pipe, { type: 'verify-approval-code', code, userId });
+  if (resp?.status === 'ok' && resp.approved) {
+    return { ok: true };
+  }
+  const err = ((resp as any)?.error) as string | undefined;
+  return { ok: false, error: err || 'Verification failed' };
+}
+
 export async function setupSlashCommands(
   client: Client,
   guildId: string,
   deps: SlashCommandDeps,
 ): Promise<void> {
   const commands = [
+    // Authorization command for Discord users to unlock remote control
+    new SlashCommandBuilder()
+      .setName("auth")
+      .setDescription("Authorize Discord remote control using the code from your terminal")
+      .addStringOption((opt) =>
+        opt.setName("code")
+          .setDescription("6-digit pairing code")
+          .setRequired(true)
+          .setMinLength(6)
+          .setMaxLength(6)
+      ),
     new SlashCommandBuilder()
       .setName("mode")
       .setDescription("Switch Claude Code permission mode")
@@ -103,8 +139,34 @@ export async function setupSlashCommands(
     if (interaction.channelId !== deps.channelId) return;
     const cmd = interaction as ChatInputCommandInteraction;
     const { activity, sendToParent, getCtx } = deps;
+    const userId = interaction.user.id;
+
+    // Authorization check for all commands except /auth
+    if (cmd.commandName !== 'auth') {
+      const approved = await isApprovedUser(userId);
+      if (!approved) {
+        await cmd.reply({
+          content: "❌ You are not authorized to use these commands. Enter the 6-digit code shown in the terminal to authorize.",
+          ephemeral: true,
+        });
+        return;
+      }
+    }
 
     switch (cmd.commandName) {
+      case "auth": {
+        const code = cmd.options.getString("code", true);
+        const result = await verifyCode(userId, code);
+        if (result.ok) {
+          await cmd.reply({ content: "✅ Authorized! You can now use Discord commands.", ephemeral: true });
+        } else {
+          await cmd.reply({
+            content: `❌ Authorization failed: ${result.error || 'Invalid code'}. Check the terminal and try again.`,
+            ephemeral: true,
+          });
+        }
+        break;
+      }
       case "mode": {
         const target = cmd.options.getString("mode", true);
         const current = getCtx()?.permissionMode || "default";

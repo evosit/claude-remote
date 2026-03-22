@@ -10,6 +10,7 @@ import { resolveJSONLPath, ID_PREFIX, capSet, truncate, extractToolResultText, e
 import { getConfigDir, getPlatform } from "./platform.js";
 import type { JSONLMessage, ProcessedMessage, ContentBlock, ContentBlockToolUse, ContentBlockText, ContentBlockToolResult, DaemonToParent, ParentToDaemon } from "./types.js";
 import debug from 'debug';
+import { sendPipeMessage } from "./pipe-client.js";
 
 const d = debug('claude-remote:daemon');
 
@@ -313,7 +314,37 @@ async function start() {
       activity!.update("thinking", client);
     });
 
-    provider.onInteraction((interaction) => {
+    provider.onInteraction(async (interaction) => {
+      // Extract raw Discord interaction to get user and reply
+      const raw = interaction.ref as any;
+      const userId = raw?.user?.id;
+      if (!userId) {
+        return; // Cannot identify user, ignore
+      }
+
+      // Authorization check: ensure the Discord user is authorized for this session
+      const pipe = process.env.CLAUDE_REMOTE_PIPE;
+      let approved = false;
+      if (pipe) {
+        try {
+          const resp = await sendPipeMessage(pipe, { type: 'check-approved', userId });
+          approved = resp?.approved === true;
+        } catch (err) {
+          approved = false;
+        }
+      }
+      if (!approved) {
+        try {
+          await raw.reply({
+            content: "❌ You are not authorized. Enter the 6-digit code shown in the terminal to activate.",
+            ephemeral: true,
+          });
+        } catch (e) {
+          // Could not reply (maybe interaction already responded)
+        }
+        return;
+      }
+
       const id = interaction.customId;
 
       if (id.startsWith(ID_PREFIX.ALLOW)) {
