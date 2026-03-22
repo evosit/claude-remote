@@ -1,8 +1,8 @@
-# Roadmap: Linux Support (v2.0)
+# Roadmap: Security Hardening (v2.1)
 
-**Milestone**: v2.0 — Cross-platform claude-remote
-**Start date**: 2025-03-20
-**Target completion**: 2-3 weeks (part-time)
+**Milestone**: v2.1 — Secure Session Management
+**Start date**: 2025-03-20 (v2.0 roadmap), 2026-03-22 (v2.1)
+**Target completion**: 3-5 days (part-time)
 **Status**: Planning phase
 
 ---
@@ -11,12 +11,13 @@
 
 | Phase | Name | Goal | Est. Duration | Status |
 |-------|------|------|---------------|--------|
-| 1 | Platform Abstraction | Core cross-platform infrastructure | 2-3 days | Planned |
-| 2 | 1/1 | Complete   | 2026-03-21 | Planned |
-| 3 | Testing & Polish | Validate on Linux, fix bugs, improve UX | 2-3 days | Planned |
-| 4 | Documentation & Release | Update README, write changelog, publish | 1 day | Planned |
+| 1 | Platform Abstraction (v2.0) | Core cross-platform infrastructure | 2-3 days | Completed 2026-03-21 |
+| 2 | Linux Shell Integration (v2.0) | Shell alias, .env support, XDG config | 2-3 days | Completed 2026-03-21 |
+| 3 | Testing & Polish (v2.0) | Multi-distro tests, bug fixes, debug logging | 2-3 days | Completed 2026-03-21 |
+| 4 | Documentation & Release (v2.0) | README, changelog, publish v2.0.0 | 1 day | Completed 2026-03-22 |
+| 5 | Secure Session Management (v2.1) | Pairing code authorization, prevent hijacking | 3-5 days | Planning |
 
-**Total**: ~6-8 days of development work (spread across 1-2 weeks)
+**Total v2.1**: ~3-5 days of development work
 
 ---
 

@@ -11,13 +11,64 @@ progress:
   completed_plans: 3
 ---
 
-# Project State: Linux Support (v2.0)
+# Project State: Security Hardening (v2.1)
 
 ## Project Reference
 
 **Core Value**: Enable developers on Linux to use `claude-remote` to control Claude Code from Discord, with feature parity comparable to Windows experience.
 
-**Current Focus**: Phase 4 (Documentation & Release) – README, CHANGELOG complete, version bumped to 2.0.0; manual release steps pending.
+**Current Focus**: v2.0 released (Linux support completed). Next: Phase 5 (Secure Session Management) – addressing public bot authorization vulnerability.
+
+---
+
+## v2.0 Summary (Completed 2026-03-22)
+
+- ✅ Full Linux support (Ubuntu, Fedora, Alpine, WSL2)
+- ✅ Platform abstraction with Unix sockets
+- ✅ Shell integration (bash/zsh/fish)
+- ✅ XDG config directory compliance
+- ✅ `.env` file support
+- ✅ Debug logging
+- ✅ Daemon auto-restart bug fixed (prevents orphaned bots)
+- ✅ v2.1.0 ready for security phase
+
+---
+
+## Current Position (v2.1)
+
+Milestone: v2.1 — Secure Session Management
+Phase: 05 (secure-session-management) — **Planning**
+Plans: 0 of 1 completed
+
+### Recent Decisions
+
+| Date | Decision |
+|------|----------|
+| 2026-03-22 | Initiate security hardening phase to require pairing code for Discord remote control |
+| 2026-03-22 | Design: 6-digit numeric code, 60s TTL, single-use, rate-limited (5 attempts / 10min) |
+| 2026-03-22 | Authorization model: single Discord user per session; others denied |
+| 2026-03-22 | User experience: code displayed in terminal on startup; user enters via `/remote on <code>` or modal |
+
+### Blockers / Concerns
+
+- None critical
+
+### Next Action
+
+- Complete P5.1 (Research) → already done (05-RESEARCH.md)
+- Complete P5.2 (Plan) → already done (05-PLAN.md)
+- Approve plan → implement P5.3 through P5.9
+- Update STATE after implementation
+
+---
+
+## Key Files
+
+- `.planning/ROADMAP.md` – Phase breakdown and tasks
+- `.planning/REQUIREMENTS.md` – Full functional requirements (legacy; P5 has own research/plan)
+- `.planning/research/` – Research documents
+- `.planning/codebase/` – Codebase analysis
+- `.planning/phases/05-secure-session-management/` – Phase-specific artifacts
 
 ---
 
