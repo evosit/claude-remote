@@ -52,7 +52,7 @@ If you run into issues on your distribution, consult `COMPATIBILITY.md` for guid
 ### Install and configure
 
 ```bash
-npm install -g @hoangvu12/claude-remote
+npm install -g @dacineu/claude-remote
 claude-remote setup
 ```
 
@@ -63,7 +63,7 @@ Setup walks you through entering your bot token, picking your server, and instal
 After installing Node.js and build tools (see Prerequisites above), you can install `claude-remote` globally:
 
 ```bash
-npm install -g @hoangvu12/claude-remote
+npm install -g @dacineu/claude-remote
 ```
 
 This installs two binaries: `claude-remote` and `remote-cmd`.
@@ -152,20 +152,28 @@ Toggle the Discord sync inside a session:
 /remote status        # print current state
 ```
 
+### Authorization
+
+For security, each Discord remote session requires a one-time authorization. When you enable remote sync (`/remote on`), a 6-digit pairing code is displayed in your terminal. Enter this code using the `/auth` slash command in Discord to unlock control of the session. The code expires after 60 seconds and can only be used once.
+
+If you need to re-authorize (e.g., after the code expires), simply restart the session with `/remote off` and `/remote on` to generate a new code.
+
 ### Discord commands
 
-Once connected, you get slash commands in the channel:
+Once authorized, you can use the following slash commands in the channel:
 
 | Command | What it does |
 |---------|-------------|
+| `/auth <code>` | Authorize using the pairing code from terminal |
 | `/mode <mode>` | Switch permission mode |
 | `/status` | Session info and current state |
 | `/stop` | Interrupt Claude |
 | `/clear` | Clear context, start fresh |
 | `/compact [instructions]` | Trigger context compaction |
 | `/queue view\|clear\|remove\|edit` | Manage queued messages |
+| `/model <model>` | Switch Claude model |
 
-You can also just type in the channel to send messages to Claude, or attach images.
+You can also just type in the channel to send messages to Claude, or attach images. Buttons and select menus will appear for tool calls, file diffs, and task management — you can approve/deny directly from Discord.
 
 **Note:** When the channel is created, a pinned message appears with usage instructions and available commands. Read it for quick reference.
 
@@ -201,7 +209,7 @@ Discord is the only provider right now, but the codebase has a provider interfac
 
 ```bash
 claude-remote uninstall
-npm uninstall -g @hoangvu12/claude-remote
+npm uninstall -g @dacineu/claude-remote
 ```
 
 ## Debugging

@@ -17,6 +17,7 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "tsc",
+    "test": "vitest run",
     "test:smoke": "claude-remote --version && claude-remote help",
     "debug": "DEBUG=claude-remote:* claude-remote $*"
   },
@@ -49,6 +50,8 @@
     "@types/debug": "^4.1.13",
     "@types/node": "^22.13.10",
     "@types/which": "^3.0.4",
-    "typescript": "^5.8.2"
+    "@vitest/coverage-v8": "^4.1.0",
+    "typescript": "^5.8.2",
+    "vitest": "^4.1.0"
   }
 }

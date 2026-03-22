@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Configuration directory remains `~/.claude/claude-remote/` for cross-platform consistency
 
+### Fixed
+- Daemon auto-restart bug that caused bot to stay online after session exit. The daemon now properly shuts down when the parent process exits cleanly, preventing orphaned bots.
+
 ### Known Issues
 - WSL2: file watching may have delays when editing from Windows editors
 - Alpine Linux requires manual build dependencies (see COMPATIBILITY.md)
@@ -48,7 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-*(No unreleased changes yet)*
+### Added
+- **Security: Pairing code authorization** – Each Discord remote session generates a unique 6-digit pairing code displayed in the terminal. Users must enter `/auth <code>` in Discord to authorize control. The code expires after 60 seconds and is single-use.
+- `/auth` slash command to verify the pairing code.
+- Rate limiting: max 5 attempts per 10-minute window to prevent brute force.
+- All slash commands and Discord button interactions now require prior authorization.
+
+### Changed (Breaking)
+- Public bots are no longer open for control by any Discord user. Authorization via terminal pairing code is mandatory. Existing deployments will need to re-authorize when upgrading.
+
+### Fixed
+- Daemon auto-restart bug that caused bot to stay online after session exit.
 
 ---
 
