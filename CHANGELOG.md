@@ -55,7 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Security: Pairing code authorization** – Each Discord remote session generates a unique 6-digit pairing code displayed in the terminal. Users must enter `/auth <code>` in Discord to authorize control. The code expires after 60 seconds and is single-use.
 - `/auth` slash command to verify the pairing code.
 - Rate limiting: max 5 attempts per 10-minute window to prevent brute force.
-- All slash commands and Discord button interactions now require prior authorization.
+- All user input channels now require authorization:
+  - Slash commands (`/mode`, `/status`, etc.)
+  - Button/select interactions (tool approvals, menus)
+  - Direct channel messages (typing messages)
 
 ### Changed (Breaking)
 - Public bots are no longer open for control by any Discord user. Authorization via terminal pairing code is mandatory. Existing deployments will need to re-authorize when upgrading.
