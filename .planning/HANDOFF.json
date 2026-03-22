@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-03-22T01:28:05.791Z",
+  "phase": 5,
+  "phase_name": "secure-session-management",
+  "phase_dir": ".planning/phases/05-secure-session-management",
+  "plan": 5,
+  "task": 21,
+  "total_tasks": 9,
+  "status": "paused",
+  "completed_tasks": [
+    { "id": 1, "name": "ApprovalManager core", "status": "done", "commit": "a28bd9e" },
+    { "id": 2, "name": "RC IPC methods", "status": "done", "commit": "746c7f1" },
+    { "id": 3, "name": "Display pairing code on startup", "status": "done", "commit": "842a819" },
+    { "id": 4, "name": "/auth slash command + guard", "status": "done", "commit": "746c7f1" },
+    { "id": 5, "name": "Protect Discord interactions", "status": "done", "commit": "5cf3991" },
+    { "id": 6, "name": "Protect direct user messages", "status": "done", "commit": "5cf3991" },
+    { "id": 7, "name": "Unit tests for ApprovalManager", "status": "done", "commit": "8b70cef" },
+    { "id": 8, "name": "Documentation updates (README, CHANGELOG)", "status": "done", "commit": "8b70cef" },
+    { "id": 9, "name": "Phase summary and test plan", "status": "done", "commit": "842a819" }
+  ],
+  "remaining_tasks": [
+    { "id": 10, "name": "Security testing and validation (UAT)", "status": "not_started" }
+  ],
+  "blockers": [],
+  "human_actions_pending": [
+    {
+      "action": "Perform manual integration testing",
+      "context": "Verify pairing code flow, authorization, rate limiting, and all protected input channels (slash commands, buttons, direct messages). See TEST-PLAN.md.",
+      "blocking": true
+    }
+  ],
+  "decisions": [
+    {
+      "decision": "Separate /auth command instead of modifying /remote on",
+      "rationale": "Keeps concerns separated; authorization is distinct from enabling sync. Easier to evolve independently.",
+      "phase": 5
+    },
+    {
+      "decision": "Single-user approval model",
+      "rationale": "Simpler; only one Discord user needs to control the session. Multi-user not required.",
+      "phase": 5
+    },
+    {
+      "decision": "Silent block for unauthorized direct messages",
+      "rationale": "Discord messages cannot be ephemerally replied from bot-to-user context; rejecting silently avoids confusion but may be perceived as bug. Could change to public ❌ reaction.",
+      "phase": 5
+    }
+  ],
+  "uncommitted_files": [],
+  "next_action": "Execute manual test scenarios from .planning/phases/05-secure-session-management/05-TEST-PLAN.md and verify all acceptance criteria. Then mark task #21 as complete and consider next steps (e.g., npm publishing).",
+  "context_notes": "Implementation complete, all code pushed to GitHub. Authorization system functional. Awaiting UAT before finalizing v2.1.0 release. Tests are automated for ApprovalManager; end-to-end manual tests pending."
+}
